@@ -10,10 +10,9 @@ import { useGameStore } from './store'
 import type { Pickup } from './types'
 
 type PlayerCarProps = {
-  activePickups: Record<string, boolean>
-  pickupMap: Map<string, Pickup>
+  pickups: Pickup[]
   onCollectPickup: (pickupId: string) => void
-  onResetPickups: () => void
+  onPlayerPosition: (position: [number, number, number]) => void
 }
 
 const START_POSITION = { x: 0, y: 0.38, z: 20 }
@@ -45,13 +44,15 @@ const getDamageForSpeed = (speed: number, hardHit: boolean) => {
   return DAMAGE_TIERS.high
 }
 
-export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPickups }: PlayerCarProps) => {
+export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody | null>(null)
   const lastDamageAt = useRef(0)
   const inputRef = useRef(createInputState())
   const shakeStrengthRef = useRef(0)
   const sparkStrengthRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
+  const bumperRef = useRef<Group>(null)
+  const loosePanelRef = useRef<Group>(null)
   const smoothedPosRef = useRef(new Vector3(START_POSITION.x, START_POSITION.y, START_POSITION.z))
   const smoothedForwardRef = useRef(new Vector3(0, 0, 1))
   const smoothedTargetRef = useRef(new Vector3(0, 0, 0))
@@ -68,6 +69,7 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
   const restartRun = useGameStore((state) => state.restartRun)
 
   const palette = useMemo(() => getPalette(damage), [damage])
+  const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
 
   useEffect(() => {
     const body = bodyRef.current
@@ -84,8 +86,7 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
     smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
-    onResetPickups()
-  }, [restartToken, onResetPickups])
+  }, [restartToken])
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -121,13 +122,14 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
     }
   }, [setKeyboardInput])
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     const body = bodyRef.current
     if (!body) {
       return
     }
 
     const pos = body.translation()
+    onPlayerPosition([pos.x, pos.y, pos.z])
 
     if (status === 'lost') {
       if (inputRef.current.restart) {
@@ -208,16 +210,28 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
       hitSparkRef.current.visible = spark > 0.08
       hitSparkRef.current.scale.setScalar(0.7 + spark * 0.7)
     }
+    if (bumperRef.current) {
+      const bend = Math.max(0, (damage - 58) / 42)
+      const targetRotX = -0.03 - bend * 0.3
+      const targetPosY = -0.05 - bend * 0.09
+      bumperRef.current.rotation.x += (targetRotX - bumperRef.current.rotation.x) * Math.min(1, delta * 7)
+      bumperRef.current.position.y += (targetPosY - bumperRef.current.position.y) * Math.min(1, delta * 7)
+    }
+    if (loosePanelRef.current) {
+      const isLoose = damage >= 82
+      loosePanelRef.current.visible = isLoose
+      if (isLoose) {
+        const wobble = 0.08 + (damage - 82) / 18 * 0.08
+        loosePanelRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 15) * wobble
+        loosePanelRef.current.rotation.y = Math.cos(state.clock.elapsedTime * 9) * wobble * 0.5
+      }
+    }
     camera.position.lerp(tempCamPosition, camPosSmoothing)
     camera.lookAt(smoothedTargetRef.current)
 
-    pickupMap.forEach((pickup, id) => {
-      if (!activePickups[id]) {
-        return
-      }
-
+    pickups.forEach((pickup) => {
       tempVec.set(pickup.position[0], pickup.position[1], pickup.position[2])
-      const distance = tempVec.distanceTo(tempCamTarget)
+      const distance = tempVec.distanceTo(tempBodyPos)
       if (distance > 1.5) {
         return
       }
@@ -228,7 +242,7 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
         repair(20)
       }
       playPickupSound(pickup.type)
-      onCollectPickup(id)
+      onCollectPickup(pickup.id)
     })
   })
 
@@ -288,6 +302,22 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
           <boxGeometry args={[0.8, 0.2, 0.6]} />
           <meshStandardMaterial color="#a7d2ff" emissive="#2a71bf" emissiveIntensity={0.3} />
         </mesh>
+        <mesh position={[0, 0.81, 0.41]}>
+          <planeGeometry args={[0.7, 0.16]} />
+          <meshStandardMaterial color="#1f2026" transparent opacity={crackOpacity} />
+        </mesh>
+        <group ref={bumperRef} position={[0, -0.05, 1.2]}>
+          <mesh castShadow>
+            <boxGeometry args={[1.35, 0.22, 0.24]} />
+            <meshStandardMaterial color={damage >= 60 ? '#3f434f' : palette.accent} metalness={0.25} roughness={0.6} />
+          </mesh>
+        </group>
+        <group ref={loosePanelRef} position={[0.82, 0.26, 0.18]} visible={false}>
+          <mesh castShadow>
+            <boxGeometry args={[0.12, 0.46, 0.72]} />
+            <meshStandardMaterial color="#48515f" metalness={0.25} roughness={0.75} />
+          </mesh>
+        </group>
         {[[-0.6, -0.06, -0.8], [0.6, -0.06, -0.8], [-0.6, -0.06, 0.8], [0.6, -0.06, 0.8]].map(([x, y, z]) => (
           <mesh key={`${x}-${z}`} castShadow position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
             <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />

@@ -1,12 +1,20 @@
 import { ContactShadows, Environment, Sparkles } from '@react-three/drei'
+import { useFrame } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, RepeatWrapping } from 'three'
 import { TRACK_SIZE } from './config'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
 import type { Pickup, WorldObstacle } from './types'
 import { INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
+
+const MIN_STARS = 5
+const MIN_REPAIRS = 2
+const SPAWN_CHECK_SECONDS = 1.2
+const SPAWN_MARGIN = 4
+const MIN_DISTANCE_FROM_PLAYER = 9
+const MIN_DISTANCE_FROM_PICKUP = 3.2
 
 const Ground = () => {
   const groundTexture = useMemo(() => {
@@ -84,11 +92,7 @@ const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
   </RigidBody>
 )
 
-const PickupItem = ({ pickup, active }: { pickup: Pickup; active: boolean }) => {
-  if (!active) {
-    return null
-  }
-
+const PickupItem = ({ pickup }: { pickup: Pickup }) => {
   if (pickup.type === 'star') {
     return (
       <group position={pickup.position}>
@@ -112,26 +116,124 @@ const PickupItem = ({ pickup, active }: { pickup: Pickup; active: boolean }) => 
   )
 }
 
-export const GameScene = () => {
-  const restartToken = useGameStore((state) => state.restartToken)
-  const [activePickups, setActivePickups] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(INITIAL_PICKUPS.map((pickup) => [pickup.id, true])),
-  )
+const OBSTACLES_FOR_SPAWN = [...STATIC_OBSTACLES, ...MOVABLE_OBSTACLES]
 
-  const pickupMap = useMemo(() => new Map(INITIAL_PICKUPS.map((pickup) => [pickup.id, pickup])), [])
+const isSpawnBlocked = (x: number, z: number, playerPosition: [number, number, number], existingPickups: Pickup[]) => {
+  const px = playerPosition[0]
+  const pz = playerPosition[2]
+  const playerDistance = Math.hypot(x - px, z - pz)
+  if (playerDistance < MIN_DISTANCE_FROM_PLAYER) {
+    return true
+  }
+
+  for (const pickup of existingPickups) {
+    const dist = Math.hypot(x - pickup.position[0], z - pickup.position[2])
+    if (dist < MIN_DISTANCE_FROM_PICKUP) {
+      return true
+    }
+  }
+
+  for (const obstacle of OBSTACLES_FOR_SPAWN) {
+    const halfX = obstacle.size[0] / 2 + 1.2
+    const halfZ = obstacle.size[2] / 2 + 1.2
+    if (Math.abs(x - obstacle.position[0]) < halfX && Math.abs(z - obstacle.position[2]) < halfZ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const generateSpawnPosition = (existingPickups: Pickup[], playerPosition: [number, number, number]) => {
+  const half = TRACK_SIZE / 2 - SPAWN_MARGIN
+  for (let i = 0; i < 36; i += 1) {
+    const x = (Math.random() * 2 - 1) * half
+    const z = (Math.random() * 2 - 1) * half
+    if (!isSpawnBlocked(x, z, playerPosition, existingPickups)) {
+      return [x, 0.8, z] as [number, number, number]
+    }
+  }
+  return null
+}
+
+export const GameScene = () => {
+  const damage = useGameStore((state) => state.damage)
+  const status = useGameStore((state) => state.status)
+  const restartToken = useGameStore((state) => state.restartToken)
+  const [pickups, setPickups] = useState<Pickup[]>(() => [...INITIAL_PICKUPS])
+
+  const playerPositionRef = useRef<[number, number, number]>([0, 0.38, 20])
+  const spawnTimerRef = useRef(0)
+  const spawnIdRef = useRef(0)
+  const seenRestartTokenRef = useRef(restartToken)
 
   const collectPickup = useCallback((pickupId: string) => {
-    setActivePickups((state) => {
-      if (!state[pickupId]) {
-        return state
-      }
-      return { ...state, [pickupId]: false }
-    })
+    setPickups((state) => state.filter((pickup) => pickup.id !== pickupId))
   }, [])
 
-  const resetPickups = useCallback(() => {
-    setActivePickups(Object.fromEntries(INITIAL_PICKUPS.map((pickup) => [pickup.id, true])))
+  const updatePlayerPosition = useCallback((position: [number, number, number]) => {
+    playerPositionRef.current = position
   }, [])
+
+  useFrame((_, delta) => {
+    if (seenRestartTokenRef.current !== restartToken) {
+      seenRestartTokenRef.current = restartToken
+      spawnTimerRef.current = 0
+      spawnIdRef.current = 0
+      playerPositionRef.current = [0, 0.38, 20]
+      setPickups([...INITIAL_PICKUPS])
+      return
+    }
+
+    if (status !== 'running') {
+      return
+    }
+
+    spawnTimerRef.current += delta
+    if (spawnTimerRef.current < SPAWN_CHECK_SECONDS) {
+      return
+    }
+    spawnTimerRef.current = 0
+
+    setPickups((current) => {
+      const starCount = current.filter((pickup) => pickup.type === 'star').length
+      const repairCount = current.filter((pickup) => pickup.type === 'repair').length
+
+      const missingStars = Math.max(0, MIN_STARS - starCount)
+      const missingRepairs = Math.max(0, MIN_REPAIRS - repairCount)
+
+      if (missingStars === 0 && missingRepairs === 0) {
+        return current
+      }
+
+      const next = [...current]
+      const spawnTypes: Pickup['type'][] = []
+
+      for (let i = 0; i < missingStars; i += 1) {
+        spawnTypes.push('star')
+      }
+      for (let i = 0; i < missingRepairs; i += 1) {
+        spawnTypes.push('repair')
+      }
+
+      if (damage > 65 && missingRepairs === 0 && Math.random() < 0.35) {
+        spawnTypes.push('repair')
+      }
+
+      for (const type of spawnTypes) {
+        const position = generateSpawnPosition(next, playerPositionRef.current)
+        if (!position) {
+          continue
+        }
+
+        const id = `${type}-spawn-${restartToken}-${spawnIdRef.current}`
+        spawnIdRef.current += 1
+        next.push({ id, position, type })
+      }
+
+      return next
+    })
+  })
 
   return (
     <>
@@ -158,10 +260,10 @@ export const GameScene = () => {
       {MOVABLE_OBSTACLES.map((obstacle) => (
         <MovableObstacle obstacle={obstacle} key={`${obstacle.id}-${restartToken}`} />
       ))}
-      {INITIAL_PICKUPS.map((pickup) => (
-        <PickupItem pickup={pickup} key={pickup.id} active={activePickups[pickup.id]} />
+      {pickups.map((pickup) => (
+        <PickupItem pickup={pickup} key={pickup.id} />
       ))}
-      <PlayerCar activePickups={activePickups} pickupMap={pickupMap} onCollectPickup={collectPickup} onResetPickups={resetPickups} />
+      <PlayerCar pickups={pickups} onCollectPickup={collectPickup} onPlayerPosition={updatePlayerPosition} />
     </>
   )
 }
