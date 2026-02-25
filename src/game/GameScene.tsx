@@ -15,6 +15,8 @@ const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
 const MIN_DISTANCE_FROM_PICKUP = 3.2
+const ROAD_OUTER_HALF = 23
+const ROAD_INNER_HALF = 11
 
 const Ground = () => {
   const groundTexture = useMemo(() => {
@@ -62,6 +64,124 @@ const Ground = () => {
     </RigidBody>
   )
 }
+
+const RoadLoop = () => {
+  const roadTexture = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1024
+    canvas.height = 1024
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return null
+    }
+
+    const toCanvas = (v: number) => ((v / TRACK_SIZE) + 0.5) * canvas.width
+
+    const outerMin = toCanvas(-ROAD_OUTER_HALF)
+    const outerMax = toCanvas(ROAD_OUTER_HALF)
+    const innerMin = toCanvas(-ROAD_INNER_HALF)
+    const innerMax = toCanvas(ROAD_INNER_HALF)
+    const midHalf = (ROAD_OUTER_HALF + ROAD_INNER_HALF) / 2
+    const midMin = toCanvas(-midHalf)
+    const midMax = toCanvas(midHalf)
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    ctx.fillStyle = '#2f3338'
+    ctx.fillRect(outerMin, outerMin, outerMax - outerMin, outerMax - outerMin)
+    ctx.clearRect(innerMin, innerMin, innerMax - innerMin, innerMax - innerMin)
+
+    ctx.strokeStyle = '#4f545d'
+    ctx.lineWidth = 14
+    ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
+
+    ctx.strokeStyle = '#f7f7f0'
+    ctx.lineWidth = 6
+    ctx.setLineDash([24, 18])
+    ctx.strokeRect(midMin, midMin, midMax - midMin, midMax - midMin)
+    ctx.setLineDash([])
+
+    const texture = new CanvasTexture(canvas)
+    texture.wrapS = RepeatWrapping
+    texture.wrapT = RepeatWrapping
+    return texture
+  }, [])
+
+  return (
+    <mesh receiveShadow position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[TRACK_SIZE, TRACK_SIZE]} />
+      <meshStandardMaterial map={roadTexture} transparent roughness={0.92} metalness={0.12} />
+    </mesh>
+  )
+}
+
+const CurbStrip = ({ length = 1, position, rotation = [0, 0, 0] as [number, number, number] }: { length?: number; position: [number, number, number]; rotation?: [number, number, number] }) => (
+  <group position={position} rotation={rotation}>
+    <mesh receiveShadow castShadow>
+      <boxGeometry args={[length, 0.26, 0.72]} />
+      <meshStandardMaterial color="#f1efe7" roughness={0.75} />
+    </mesh>
+    <mesh position={[0, 0.1, 0]}>
+      <boxGeometry args={[length, 0.05, 0.46]} />
+      <meshStandardMaterial color="#d2463a" roughness={0.65} />
+    </mesh>
+  </group>
+)
+
+const Curbs = () => {
+  const outerLength = ROAD_OUTER_HALF * 2
+  const innerLength = ROAD_INNER_HALF * 2
+
+  return (
+    <group>
+      <CurbStrip length={outerLength} position={[0, 0.13, ROAD_OUTER_HALF]} />
+      <CurbStrip length={outerLength} position={[0, 0.13, -ROAD_OUTER_HALF]} />
+      <CurbStrip length={outerLength} position={[ROAD_OUTER_HALF, 0.13, 0]} rotation={[0, Math.PI / 2, 0]} />
+      <CurbStrip length={outerLength} position={[-ROAD_OUTER_HALF, 0.13, 0]} rotation={[0, Math.PI / 2, 0]} />
+
+      <CurbStrip length={innerLength} position={[0, 0.13, ROAD_INNER_HALF]} />
+      <CurbStrip length={innerLength} position={[0, 0.13, -ROAD_INNER_HALF]} />
+      <CurbStrip length={innerLength} position={[ROAD_INNER_HALF, 0.13, 0]} rotation={[0, Math.PI / 2, 0]} />
+      <CurbStrip length={innerLength} position={[-ROAD_INNER_HALF, 0.13, 0]} rotation={[0, Math.PI / 2, 0]} />
+    </group>
+  )
+}
+
+const CheckpointGate = ({
+  position,
+  rotation = [0, 0, 0] as [number, number, number],
+}: {
+  position: [number, number, number]
+  rotation?: [number, number, number]
+}) => (
+  <group position={position} rotation={rotation}>
+    <mesh castShadow position={[-2.8, 1.2, 0]}>
+      <boxGeometry args={[0.38, 2.4, 0.38]} />
+      <meshStandardMaterial color="#f4f2e8" roughness={0.55} />
+    </mesh>
+    <mesh castShadow position={[2.8, 1.2, 0]}>
+      <boxGeometry args={[0.38, 2.4, 0.38]} />
+      <meshStandardMaterial color="#f4f2e8" roughness={0.55} />
+    </mesh>
+    <mesh castShadow position={[0, 2.3, 0]}>
+      <boxGeometry args={[5.95, 0.28, 0.45]} />
+      <meshStandardMaterial color="#32b0ff" emissive="#0f5f95" emissiveIntensity={0.8} roughness={0.35} />
+    </mesh>
+    <mesh position={[0, 2.05, 0.24]}>
+      <planeGeometry args={[4.8, 0.6]} />
+      <meshStandardMaterial color="#fff1a6" emissive="#986f15" emissiveIntensity={0.8} />
+    </mesh>
+  </group>
+)
+
+const CheckpointGates = () => (
+  <group>
+    <CheckpointGate position={[0, 0, -17]} rotation={[0, Math.PI / 2, 0]} />
+    <CheckpointGate position={[0, 0, 17]} rotation={[0, Math.PI / 2, 0]} />
+    <CheckpointGate position={[-17, 0, 0]} />
+    <CheckpointGate position={[17, 0, 0]} />
+  </group>
+)
 
 const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
   <RigidBody type="fixed" colliders={false} name={`${obstacle.hard ? 'hard' : 'soft'}-${obstacle.id}`}>
@@ -254,6 +374,9 @@ export const GameScene = () => {
       <Environment preset="sunset" />
       <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={1024} color="#2a4f3b" />
       <Ground />
+      <RoadLoop />
+      <Curbs />
+      <CheckpointGates />
       {STATIC_OBSTACLES.map((obstacle) => (
         <StaticObstacle obstacle={obstacle} key={obstacle.id} />
       ))}
