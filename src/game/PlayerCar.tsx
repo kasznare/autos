@@ -16,6 +16,7 @@ type PlayerCarProps = {
 }
 
 const START_POSITION = { x: 0, y: 0.38, z: 20 }
+const START_YAW = Math.PI / 2
 const CAMERA_FOLLOW_DISTANCE = 9.5
 const CAMERA_FOLLOW_HEIGHT = 5.5
 const CAMERA_LOOK_AHEAD = 4.5
@@ -61,6 +62,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const sparkStrengthRef = useRef(0)
   const sputterTimerRef = useRef(0)
   const sputterActiveRef = useRef(false)
+  const yawRateRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
@@ -93,11 +95,12 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     body.setTranslation(START_POSITION, true)
     body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-    body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true)
+    body.setRotation({ x: 0, y: Math.sin(START_YAW / 2), z: 0, w: Math.cos(START_YAW / 2) }, true)
     shakeStrengthRef.current = 0
     sparkStrengthRef.current = 0
     sputterTimerRef.current = 0
     sputterActiveRef.current = false
+    yawRateRef.current = 0
     smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
@@ -219,8 +222,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const turnDirection = Number(input.left) - Number(input.right)
     const steerStrength = Math.min(1, Math.abs(nextForwardSpeed) / 5)
     const reverseSteer = nextForwardSpeed < -0.2 ? -0.7 : 1
-    const yawRate = turnDirection * steerStrength * 2.2 * reverseSteer * steeringScale
-    body.setAngvel({ x: 0, y: yawRate, z: 0 }, true)
+    const targetYawRate = turnDirection * steerStrength * 1.55 * reverseSteer * steeringScale
+    const yawBlend = Math.min(1, delta * 8)
+    yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
+    body.setAngvel({ x: 0, y: yawRateRef.current, z: 0 }, true)
 
     const nextVx = forwardX * nextForwardSpeed + rightX * nextLateralSpeed
     const nextVz = forwardZ * nextForwardSpeed + rightZ * nextLateralSpeed
