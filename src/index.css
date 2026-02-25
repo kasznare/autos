@@ -1,0 +1,212 @@
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap');
+
+:root {
+  font-family: 'Baloo 2', sans-serif;
+  color: #10303f;
+  background: linear-gradient(135deg, #95daf4, #6ac9f5 40%, #b4f8ba);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.hud-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hit-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255, 204, 120, 0.38), rgba(255, 70, 35, 0.26));
+  opacity: 0;
+  animation: hit-flash 140ms ease-out;
+  pointer-events: none;
+}
+
+@keyframes hit-flash {
+  from {
+    opacity: var(--hit-opacity, 0);
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.hud-top-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.hud-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 3px solid #ffffff;
+  box-shadow: 0 8px 20px rgba(20, 69, 92, 0.2);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.damage-wrap {
+  align-self: center;
+  width: min(520px, 90vw);
+}
+
+.damage-label {
+  text-align: center;
+  font-weight: 800;
+  color: #083451;
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.75);
+}
+
+.damage-track {
+  margin-top: 0.45rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 2px solid #ffffff;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.damage-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2bc866, #f6bf25 65%, #ec3f35);
+  transition: width 160ms ease-out;
+}
+
+.instructions {
+  align-self: center;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  padding: 0.2rem 0.8rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #245267;
+}
+
+.touch-controls {
+  align-self: center;
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+  pointer-events: auto;
+}
+
+.touch-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.touch-btn {
+  width: 3.2rem;
+  height: 3.2rem;
+  border: 2px solid #ffffff;
+  border-radius: 0.85rem;
+  padding: 0;
+  font: inherit;
+  font-weight: 800;
+  font-size: 1.55rem;
+  line-height: 1;
+  color: #11394f;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(220, 247, 255, 0.96));
+  box-shadow: 0 5px 14px rgba(8, 41, 65, 0.22);
+}
+
+.touch-btn:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.lose-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 26, 39, 0.5);
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+
+.lose-panel {
+  width: min(90vw, 420px);
+  border-radius: 1.1rem;
+  padding: 1rem 1rem 1.2rem;
+  text-align: center;
+  background: linear-gradient(180deg, #ffffff 0%, #ffefdc 100%);
+  border: 4px solid #fff;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.22);
+}
+
+.lose-panel h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 5vw, 2rem);
+  color: #d3411c;
+}
+
+.lose-panel p {
+  margin: 0.5rem 0 1rem;
+  font-size: 1.1rem;
+}
+
+.lose-panel button {
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  border: none;
+  background: linear-gradient(180deg, #5ad06f 0%, #2ea648 100%);
+  color: #f8fff8;
+  border-radius: 999px;
+  padding: 0.5rem 1.3rem;
+  box-shadow: 0 8px 0 #1c7a33;
+}
+
+.lose-panel button:active {
+  transform: translateY(4px);
+  box-shadow: 0 4px 0 #1c7a33;
+}
+
+@media (max-width: 768px) {
+  .hud-layer {
+    padding: 0.65rem;
+  }
+
+  .hud-card {
+    font-size: 0.95rem;
+  }
+
+  .instructions {
+    font-size: 0.82rem;
+  }
+
+  .touch-btn {
+    width: 3rem;
+    height: 3rem;
+    font-size: 1.35rem;
+  }
+}

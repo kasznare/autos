@@ -1,0 +1,296 @@
+import { Sparkles, Trail } from '@react-three/drei'
+import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
+import { useFrame, useThree } from '@react-three/fiber'
+import { useEffect, useMemo, useRef } from 'react'
+import { Group, Vector3 } from 'three'
+import { DAMAGE_COLORS, DAMAGE_TIERS, MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
+import { applyKey, createInputState, getMergedInput } from './keys'
+import { playCollisionSound, playPickupSound, unlockAudio } from './sfx'
+import { useGameStore } from './store'
+import type { Pickup } from './types'
+
+type PlayerCarProps = {
+  activePickups: Record<string, boolean>
+  pickupMap: Map<string, Pickup>
+  onCollectPickup: (pickupId: string) => void
+  onResetPickups: () => void
+}
+
+const START_POSITION = { x: 0, y: 0.38, z: 20 }
+const CAMERA_FOLLOW_DISTANCE = 9.5
+const CAMERA_FOLLOW_HEIGHT = 5.5
+const CAMERA_LOOK_AHEAD = 4.5
+
+const tempVec = new Vector3()
+const tempCamTarget = new Vector3()
+const tempCamPosition = new Vector3()
+const tempBodyPos = new Vector3()
+
+const getPalette = (damage: number) =>
+  DAMAGE_COLORS.find((entry) => damage <= entry.threshold) ?? DAMAGE_COLORS[DAMAGE_COLORS.length - 1]
+
+const getDamageForSpeed = (speed: number, hardHit: boolean) => {
+  if (!hardHit) {
+    return DAMAGE_TIERS.low
+  }
+
+  if (speed < 4) {
+    return DAMAGE_TIERS.low
+  }
+
+  if (speed < 8) {
+    return DAMAGE_TIERS.medium
+  }
+
+  return DAMAGE_TIERS.high
+}
+
+export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPickups }: PlayerCarProps) => {
+  const bodyRef = useRef<RapierRigidBody | null>(null)
+  const lastDamageAt = useRef(0)
+  const inputRef = useRef(createInputState())
+  const shakeStrengthRef = useRef(0)
+  const sparkStrengthRef = useRef(0)
+  const hitSparkRef = useRef<Group>(null)
+  const smoothedPosRef = useRef(new Vector3(START_POSITION.x, START_POSITION.y, START_POSITION.z))
+  const smoothedForwardRef = useRef(new Vector3(0, 0, 1))
+  const smoothedTargetRef = useRef(new Vector3(0, 0, 0))
+  const { camera } = useThree()
+
+  const damage = useGameStore((state) => state.damage)
+  const status = useGameStore((state) => state.status)
+  const restartToken = useGameStore((state) => state.restartToken)
+  const addDamage = useGameStore((state) => state.addDamage)
+  const addScore = useGameStore((state) => state.addScore)
+  const repair = useGameStore((state) => state.repair)
+  const triggerHitFx = useGameStore((state) => state.triggerHitFx)
+  const restartRun = useGameStore((state) => state.restartRun)
+
+  const palette = useMemo(() => getPalette(damage), [damage])
+
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) {
+      return
+    }
+
+    body.setTranslation(START_POSITION, true)
+    body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+    body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true)
+    shakeStrengthRef.current = 0
+    sparkStrengthRef.current = 0
+    smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
+    smoothedForwardRef.current.set(0, 0, 1)
+    smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
+    onResetPickups()
+  }, [restartToken, onResetPickups])
+
+  useEffect(() => {
+    const onDown = (event: KeyboardEvent) => {
+      void unlockAudio()
+      applyKey(inputRef.current, event.code, true)
+    }
+    const onUp = (event: KeyboardEvent) => {
+      applyKey(inputRef.current, event.code, false)
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [])
+
+  useFrame((_, delta) => {
+    const body = bodyRef.current
+    if (!body) {
+      return
+    }
+
+    const pos = body.translation()
+
+    if (status === 'lost') {
+      if (inputRef.current.restart) {
+        restartRun()
+      }
+      return
+    }
+
+    const input = getMergedInput(inputRef.current)
+    const linVel = body.linvel()
+    const rotation = body.rotation()
+    const yaw = Math.atan2(
+      2 * (rotation.w * rotation.y + rotation.x * rotation.z),
+      1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
+    )
+    const forwardX = Math.sin(yaw)
+    const forwardZ = Math.cos(yaw)
+    const rightX = Math.cos(yaw)
+    const rightZ = -Math.sin(yaw)
+
+    const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
+    const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
+
+    const throttle = Number(input.forward) - Number(input.backward)
+    const acceleration = throttle >= 0 ? 20 : 14
+    let nextForwardSpeed = forwardSpeed + throttle * acceleration * delta
+
+    const rollingDrag = throttle === 0 ? 0.985 : 0.996
+    nextForwardSpeed *= rollingDrag
+
+    const maxForwardSpeed = 12
+    const maxReverseSpeed = -5
+    nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
+
+    const gripLerp = Math.min(1, delta * 7.5)
+    const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
+
+    const turnDirection = Number(input.left) - Number(input.right)
+    const steerStrength = Math.min(1, Math.abs(nextForwardSpeed) / 5)
+    const reverseSteer = nextForwardSpeed < -0.2 ? -0.7 : 1
+    const yawRate = turnDirection * steerStrength * 2.2 * reverseSteer
+    body.setAngvel({ x: 0, y: yawRate, z: 0 }, true)
+
+    const nextVx = forwardX * nextForwardSpeed + rightX * nextLateralSpeed
+    const nextVz = forwardZ * nextForwardSpeed + rightZ * nextLateralSpeed
+    body.setLinvel({ x: nextVx, y: linVel.y, z: nextVz }, true)
+
+    const camPosSmoothing = 1 - Math.exp(-delta * 9)
+    const camForwardSmoothing = 1 - Math.exp(-delta * 12)
+    const camTargetSmoothing = 1 - Math.exp(-delta * 11)
+
+    tempBodyPos.set(pos.x, pos.y, pos.z)
+    smoothedPosRef.current.lerp(tempBodyPos, camPosSmoothing)
+    tempVec.set(forwardX, 0, forwardZ)
+    smoothedForwardRef.current.lerp(tempVec, camForwardSmoothing).normalize()
+
+    tempCamTarget.set(
+      smoothedPosRef.current.x + smoothedForwardRef.current.x * CAMERA_LOOK_AHEAD,
+      smoothedPosRef.current.y + 1.3,
+      smoothedPosRef.current.z + smoothedForwardRef.current.z * CAMERA_LOOK_AHEAD,
+    )
+    smoothedTargetRef.current.lerp(tempCamTarget, camTargetSmoothing)
+    tempCamPosition.set(
+      smoothedPosRef.current.x - smoothedForwardRef.current.x * CAMERA_FOLLOW_DISTANCE - nextVx * 0.16,
+      smoothedPosRef.current.y + CAMERA_FOLLOW_HEIGHT,
+      smoothedPosRef.current.z - smoothedForwardRef.current.z * CAMERA_FOLLOW_DISTANCE - nextVz * 0.16,
+    )
+    shakeStrengthRef.current *= Math.max(0, 1 - delta * 7.5)
+    sparkStrengthRef.current *= Math.max(0, 1 - delta * 5.2)
+    const shake = shakeStrengthRef.current
+    if (shake > 0.002) {
+      tempCamPosition.x += (Math.random() - 0.5) * shake
+      tempCamPosition.y += (Math.random() - 0.5) * shake * 0.6
+      tempCamPosition.z += (Math.random() - 0.5) * shake
+    }
+    if (hitSparkRef.current) {
+      const spark = sparkStrengthRef.current
+      hitSparkRef.current.visible = spark > 0.08
+      hitSparkRef.current.scale.setScalar(0.7 + spark * 0.7)
+    }
+    camera.position.lerp(tempCamPosition, camPosSmoothing)
+    camera.lookAt(smoothedTargetRef.current)
+
+    pickupMap.forEach((pickup, id) => {
+      if (!activePickups[id]) {
+        return
+      }
+
+      tempVec.set(pickup.position[0], pickup.position[1], pickup.position[2])
+      const distance = tempVec.distanceTo(tempCamTarget)
+      if (distance > 1.5) {
+        return
+      }
+
+      if (pickup.type === 'star') {
+        addScore(10)
+      } else {
+        repair(20)
+      }
+      playPickupSound(pickup.type)
+      onCollectPickup(id)
+    })
+  })
+
+  return (
+    <RigidBody
+      ref={bodyRef}
+      name={PLAYER_BODY_NAME}
+      colliders={false}
+      position={[START_POSITION.x, START_POSITION.y, START_POSITION.z]}
+      enabledRotations={[false, true, false]}
+      angularDamping={2.4}
+      linearDamping={0.6}
+      mass={1.2}
+      onCollisionEnter={(payload) => {
+        if (status === 'lost') {
+          return
+        }
+
+        const now = performance.now()
+        if (now - lastDamageAt.current < 350) {
+          return
+        }
+
+        const body = bodyRef.current
+        if (!body) {
+          return
+        }
+
+        const otherBodyName = payload.other.rigidBodyObject?.name ?? ''
+        const hitIsHard = otherBodyName.startsWith('hard-')
+
+        const velocity = body.linvel()
+        const planarSpeed = Math.hypot(velocity.x, velocity.z)
+        const damageDelta = getDamageForSpeed(planarSpeed, hitIsHard)
+        addDamage(damageDelta)
+        playCollisionSound(hitIsHard, planarSpeed)
+        const hitStrength = Math.min(1, Math.max(0.18, planarSpeed / 10 + (hitIsHard ? 0.25 : 0)))
+        shakeStrengthRef.current = Math.max(shakeStrengthRef.current, hitStrength * 0.45)
+        sparkStrengthRef.current = Math.max(sparkStrengthRef.current, hitStrength)
+        triggerHitFx(hitStrength)
+        lastDamageAt.current = now
+      }}
+    >
+      <CuboidCollider args={[0.7, 0.35, 1.2]} />
+      <group>
+        <Trail width={0.6} length={3.8} color={palette.body} attenuation={(t) => t * t}>
+          <mesh castShadow position={[0, 0.2, 0]}>
+            <boxGeometry args={[1.4, 0.7, 2.4]} />
+            <meshStandardMaterial color={palette.body} metalness={0.3} roughness={0.35} />
+          </mesh>
+        </Trail>
+        <mesh castShadow position={[0, 0.62, -0.1]}>
+          <boxGeometry args={[1.1, 0.45, 1.1]} />
+          <meshStandardMaterial color={palette.accent} roughness={0.5} />
+        </mesh>
+        <mesh castShadow position={[0, 0.8, 0.3]}>
+          <boxGeometry args={[0.8, 0.2, 0.6]} />
+          <meshStandardMaterial color="#a7d2ff" emissive="#2a71bf" emissiveIntensity={0.3} />
+        </mesh>
+        {[[-0.6, -0.06, -0.8], [0.6, -0.06, -0.8], [-0.6, -0.06, 0.8], [0.6, -0.06, 0.8]].map(([x, y, z]) => (
+          <mesh key={`${x}-${z}`} castShadow position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
+            <meshStandardMaterial color="#212329" />
+          </mesh>
+        ))}
+      </group>
+      {damage >= 70 && damage < MAX_DAMAGE ? (
+        <group position={[0, 1.05, -0.8]}>
+          <mesh>
+            <sphereGeometry args={[0.35, 10, 10]} />
+            <meshStandardMaterial color="#4f4f4f" transparent opacity={0.5} />
+          </mesh>
+          <mesh position={[0.25, 0.35, -0.05]}>
+            <sphereGeometry args={[0.22, 10, 10]} />
+            <meshStandardMaterial color="#6a6a6a" transparent opacity={0.35} />
+          </mesh>
+        </group>
+      ) : null}
+      <group ref={hitSparkRef} position={[0, 0.55, -0.05]} visible={false}>
+        <Sparkles count={12} scale={1.8} size={8} speed={2.4} color="#ffe29f" />
+      </group>
+    </RigidBody>
+  )
+}
