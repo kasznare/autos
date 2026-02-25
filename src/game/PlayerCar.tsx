@@ -3,7 +3,7 @@ import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
-import { DAMAGE_TIERS, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
+import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
@@ -59,6 +59,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const inputRef = useRef(createInputState())
   const shakeStrengthRef = useRef(0)
   const sparkStrengthRef = useRef(0)
+  const sputterTimerRef = useRef(0)
+  const sputterActiveRef = useRef(false)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
@@ -94,6 +96,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true)
     shakeStrengthRef.current = 0
     sparkStrengthRef.current = 0
+    sputterTimerRef.current = 0
+    sputterActiveRef.current = false
     smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
@@ -177,25 +181,45 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const absX = Math.abs(pos.x)
     const absZ = Math.abs(pos.z)
     const onRoad = (absX <= ROAD_OUTER_HALF && absZ <= ROAD_OUTER_HALF) && !(absX < ROAD_INNER_HALF && absZ < ROAD_INNER_HALF)
+    const surfaceConfig = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
+    const damageRatio = Math.min(1, damage / MAX_DAMAGE)
+    const accelScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.accelerationLoss
+    const speedScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.topSpeedLoss
+    const steeringScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.steeringLoss
+    const gripScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.gripLoss
 
     const throttle = Number(input.forward) - Number(input.backward)
-    const acceleration = throttle >= 0 ? (onRoad ? 20 : 13.5) : onRoad ? 14 : 9.5
-    let nextForwardSpeed = forwardSpeed + throttle * acceleration * delta
+    const criticalDamage = damage >= DAMAGE_DRIVE_EFFECTS.criticalThreshold
+    if (criticalDamage) {
+      sputterTimerRef.current -= delta
+      if (sputterTimerRef.current <= 0) {
+        sputterTimerRef.current = DAMAGE_SPUTTER.minInterval + Math.random() * DAMAGE_SPUTTER.variableInterval
+        sputterActiveRef.current = Math.random() < DAMAGE_SPUTTER.chance
+      }
+    } else {
+      sputterActiveRef.current = false
+      sputterTimerRef.current = 0
+    }
+    const throttleFactor = sputterActiveRef.current && throttle > 0 ? DAMAGE_SPUTTER.throttleFactor : 1
+    const effectiveThrottle = throttle * throttleFactor
 
-    const rollingDrag = throttle === 0 ? (onRoad ? 0.985 : 0.97) : onRoad ? 0.996 : 0.988
+    const acceleration = (throttle >= 0 ? surfaceConfig.forwardAcceleration : surfaceConfig.reverseAcceleration) * accelScale
+    let nextForwardSpeed = forwardSpeed + effectiveThrottle * acceleration * delta
+
+    const rollingDrag = throttle === 0 ? surfaceConfig.coastDrag : surfaceConfig.throttleDrag
     nextForwardSpeed *= rollingDrag
 
-    const maxForwardSpeed = onRoad ? 12 : 7.4
-    const maxReverseSpeed = onRoad ? -5 : -3.2
+    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale
+    const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.85 + speedScale * 0.15)
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
-    const gripLerp = Math.min(1, delta * 7.5)
+    const gripLerp = Math.min(1, delta * 7.5 * gripScale * surfaceConfig.gripFactor)
     const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
 
     const turnDirection = Number(input.left) - Number(input.right)
     const steerStrength = Math.min(1, Math.abs(nextForwardSpeed) / 5)
     const reverseSteer = nextForwardSpeed < -0.2 ? -0.7 : 1
-    const yawRate = turnDirection * steerStrength * 2.2 * reverseSteer
+    const yawRate = turnDirection * steerStrength * 2.2 * reverseSteer * steeringScale
     body.setAngvel({ x: 0, y: yawRate, z: 0 }, true)
 
     const nextVx = forwardX * nextForwardSpeed + rightX * nextLateralSpeed

@@ -21,6 +21,8 @@ body,
 
 body {
   overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .app-shell {
@@ -37,6 +39,17 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+}
+
+.hud-layer,
+.hud-panel,
+.touch-controls,
+.touch-row,
+.touch-btn,
+.hud-toggle,
+.color-swatch {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .hit-flash {
@@ -97,6 +110,8 @@ body {
   font-weight: 800;
   font-size: 1rem;
   color: #10303f;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 .damage-wrap {
@@ -127,6 +142,8 @@ body {
   border-radius: 999px;
   border: 2px solid rgba(255, 255, 255, 0.95);
   box-shadow: 0 3px 8px rgba(10, 31, 50, 0.24);
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 .color-swatch.active {
@@ -204,6 +221,8 @@ body {
   color: #11394f;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(220, 247, 255, 0.96));
   box-shadow: 0 5px 14px rgba(8, 41, 65, 0.22);
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .touch-btn:active {
