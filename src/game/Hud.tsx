@@ -6,7 +6,17 @@ import { useGameStore } from './store'
 
 type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'restart'
 
-const TouchButton = ({ icon, ariaLabel, keyName }: { icon: string; ariaLabel: string; keyName: TouchKey }) => {
+const TouchButton = ({
+  icon,
+  ariaLabel,
+  keyName,
+  active,
+}: {
+  icon: string
+  ariaLabel: string
+  keyName: TouchKey
+  active: boolean
+}) => {
   const onPress = () => {
     void unlockAudio()
     setVirtualInput(keyName, true)
@@ -19,7 +29,7 @@ const TouchButton = ({ icon, ariaLabel, keyName }: { icon: string; ariaLabel: st
   return (
     <button
       type="button"
-      className="touch-btn"
+      className={`touch-btn${active ? ' active' : ''}`}
       aria-label={ariaLabel}
       onPointerDown={onPress}
       onPointerUp={onRelease}
@@ -38,6 +48,7 @@ export const Hud = () => {
   const score = useGameStore((state) => state.score)
   const bestScore = useGameStore((state) => state.bestScore)
   const status = useGameStore((state) => state.status)
+  const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const hitFxStrength = useGameStore((state) => state.hitFxStrength)
   const restartRun = useGameStore((state) => state.restartRun)
@@ -73,12 +84,12 @@ export const Hud = () => {
       <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
       <div className="touch-controls">
         <div className="touch-row">
-          <TouchButton icon="▲" ariaLabel="Forward" keyName="forward" />
+          <TouchButton icon="▲" ariaLabel="Forward" keyName="forward" active={keyboardInput.forward} />
         </div>
         <div className="touch-row">
-          <TouchButton icon="◀" ariaLabel="Left" keyName="left" />
-          <TouchButton icon="▼" ariaLabel="Backward" keyName="backward" />
-          <TouchButton icon="▶" ariaLabel="Right" keyName="right" />
+          <TouchButton icon="◀" ariaLabel="Left" keyName="left" active={keyboardInput.left} />
+          <TouchButton icon="▼" ariaLabel="Backward" keyName="backward" active={keyboardInput.backward} />
+          <TouchButton icon="▶" ariaLabel="Right" keyName="right" active={keyboardInput.right} />
         </div>
       </div>
 

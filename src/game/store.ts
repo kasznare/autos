@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { MAX_DAMAGE } from './config'
+import { createInputState } from './keys'
+import type { DriveInputState } from './keys'
 
 type GameStatus = 'running' | 'lost'
 
@@ -9,11 +11,13 @@ type GameState = {
   bestScore: number
   status: GameStatus
   restartToken: number
+  keyboardInput: DriveInputState
   hitFxToken: number
   hitFxStrength: number
   addDamage: (amount: number) => void
   addScore: (amount: number) => void
   repair: (amount: number) => void
+  setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
   triggerHitFx: (strength: number) => void
   restartRun: () => void
 }
@@ -24,6 +28,7 @@ export const useGameStore = create<GameState>((set) => ({
   bestScore: 0,
   status: 'running',
   restartToken: 0,
+  keyboardInput: createInputState(),
   hitFxToken: 0,
   hitFxStrength: 0,
   addDamage: (amount) =>
@@ -63,6 +68,11 @@ export const useGameStore = create<GameState>((set) => ({
         damage: Math.max(0, state.damage - amount),
       }
     }),
+  setKeyboardInput: (key, active) =>
+    set((state) => ({
+      ...state,
+      keyboardInput: { ...state.keyboardInput, [key]: active },
+    })),
   triggerHitFx: (strength) =>
     set((state) => ({
       ...state,

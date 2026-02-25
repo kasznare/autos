@@ -144,6 +144,12 @@ body {
   transform: translateY(1px) scale(0.98);
 }
 
+.touch-btn.active {
+  outline: 3px solid #ffcf3f;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(255, 113, 29, 0.9), 0 5px 14px rgba(8, 41, 65, 0.22);
+}
+
 .lose-overlay {
   position: absolute;
   inset: 0;

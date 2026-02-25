@@ -16,12 +16,20 @@ export const createInputState = (): DriveInputState => ({
 
 const virtualInputState = createInputState()
 
+export const keyCodeToInput = (code: string): keyof DriveInputState | null => {
+  if (code === 'ArrowUp' || code === 'KeyW') return 'forward'
+  if (code === 'ArrowDown' || code === 'KeyS') return 'backward'
+  if (code === 'ArrowLeft' || code === 'KeyA') return 'left'
+  if (code === 'ArrowRight' || code === 'KeyD') return 'right'
+  if (code === 'Space' || code === 'KeyR') return 'restart'
+  return null
+}
+
 export const applyKey = (state: DriveInputState, code: string, active: boolean) => {
-  if (code === 'ArrowUp' || code === 'KeyW') state.forward = active
-  if (code === 'ArrowDown' || code === 'KeyS') state.backward = active
-  if (code === 'ArrowLeft' || code === 'KeyA') state.left = active
-  if (code === 'ArrowRight' || code === 'KeyD') state.right = active
-  if (code === 'Space' || code === 'KeyR') state.restart = active
+  const mapped = keyCodeToInput(code)
+  if (mapped) {
+    state[mapped] = active
+  }
 }
 
 export const setVirtualInput = (key: keyof DriveInputState, active: boolean) => {

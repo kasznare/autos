@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Group, Vector3 } from 'three'
 import { DAMAGE_COLORS, DAMAGE_TIERS, MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
-import { applyKey, createInputState, getMergedInput } from './keys'
+import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
 import { playCollisionSound, playPickupSound, unlockAudio } from './sfx'
 import { useGameStore } from './store'
 import type { Pickup } from './types'
@@ -63,6 +63,7 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
   const addDamage = useGameStore((state) => state.addDamage)
   const addScore = useGameStore((state) => state.addScore)
   const repair = useGameStore((state) => state.repair)
+  const setKeyboardInput = useGameStore((state) => state.setKeyboardInput)
   const triggerHitFx = useGameStore((state) => state.triggerHitFx)
   const restartRun = useGameStore((state) => state.restartRun)
 
@@ -90,17 +91,35 @@ export const PlayerCar = ({ activePickups, pickupMap, onCollectPickup, onResetPi
     const onDown = (event: KeyboardEvent) => {
       void unlockAudio()
       applyKey(inputRef.current, event.code, true)
+      const mapped = keyCodeToInput(event.code)
+      if (mapped) {
+        setKeyboardInput(mapped, true)
+      }
     }
     const onUp = (event: KeyboardEvent) => {
       applyKey(inputRef.current, event.code, false)
+      const mapped = keyCodeToInput(event.code)
+      if (mapped) {
+        setKeyboardInput(mapped, false)
+      }
+    }
+    const onBlur = () => {
+      inputRef.current = createInputState()
+      setKeyboardInput('forward', false)
+      setKeyboardInput('backward', false)
+      setKeyboardInput('left', false)
+      setKeyboardInput('right', false)
+      setKeyboardInput('restart', false)
     }
     window.addEventListener('keydown', onDown)
     window.addEventListener('keyup', onUp)
+    window.addEventListener('blur', onBlur)
     return () => {
       window.removeEventListener('keydown', onDown)
       window.removeEventListener('keyup', onUp)
+      window.removeEventListener('blur', onBlur)
     }
-  }, [])
+  }, [setKeyboardInput])
 
   useFrame((_, delta) => {
     const body = bodyRef.current
