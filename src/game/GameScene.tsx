@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, RepeatWrapping } from 'three'
-import { TRACK_SIZE } from './config'
+import { ROAD_INNER_HALF, ROAD_OUTER_HALF, TRACK_SIZE } from './config'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
 import type { Pickup, WorldObstacle } from './types'
@@ -15,9 +15,6 @@ const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
 const MIN_DISTANCE_FROM_PICKUP = 3.2
-const ROAD_OUTER_HALF = 23
-const ROAD_INNER_HALF = 11
-
 const Ground = () => {
   const groundTexture = useMemo(() => {
     const canvas = document.createElement('canvas')

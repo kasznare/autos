@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { MAX_DAMAGE } from './config'
+import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
@@ -48,10 +48,14 @@ export const Hud = () => {
   const score = useGameStore((state) => state.score)
   const bestScore = useGameStore((state) => state.bestScore)
   const status = useGameStore((state) => state.status)
+  const engineMuted = useGameStore((state) => state.engineMuted)
+  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const hitFxStrength = useGameStore((state) => state.hitFxStrength)
   const restartRun = useGameStore((state) => state.restartRun)
+  const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
+  const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
   const hitOpacity = hitFxToken === 0 ? 0 : Math.min(0.38, 0.12 + hitFxStrength * 0.24)
@@ -69,19 +73,36 @@ export const Hud = () => {
         className="hit-flash"
         style={{ ['--hit-opacity' as string]: `${hitOpacity}` }}
       />
-      <div className="hud-top-row">
-        <div className="hud-card">Score: {score}</div>
-        <div className="hud-card">Best: {bestScore}</div>
-      </div>
+      <div className="hud-panel">
+        <div className="hud-top-row">
+          <div className="hud-card">Score: {score}</div>
+          <div className="hud-card">Best: {bestScore}</div>
+          <button type="button" className="hud-toggle" onClick={toggleEngineMuted}>
+            Sound: {engineMuted ? 'Off' : 'On'}
+          </button>
+        </div>
 
-      <div className="damage-wrap">
+        <div className="color-picker">
+          {CAR_COLOR_OPTIONS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={`color-swatch${selectedCarColor === color ? ' active' : ''}`}
+              style={{ background: color }}
+              onClick={() => setSelectedCarColor(color)}
+              aria-label={`Select car color ${color}`}
+            />
+          ))}
+        </div>
+
+        <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
+      </div>
+      <div className="damage-wrap damage-wrap-center">
         <div className="damage-label">Damage: {damagePct}%</div>
         <div className="damage-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={damagePct}>
           <div className="damage-fill" style={{ width: `${damagePct}%` }} />
         </div>
       </div>
-
-      <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
       <div className="touch-controls">
         <div className="touch-row">
           <TouchButton icon="▲" ariaLabel="Forward" keyName="forward" active={keyboardInput.forward} />

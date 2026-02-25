@@ -2,10 +2,10 @@ import { Sparkles, Trail } from '@react-three/drei'
 import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
-import { Group, Vector3 } from 'three'
-import { DAMAGE_COLORS, DAMAGE_TIERS, MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
+import { Color, Group, Vector3 } from 'three'
+import { DAMAGE_TIERS, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
-import { playCollisionSound, playPickupSound, unlockAudio } from './sfx'
+import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
 import type { Pickup } from './types'
 
@@ -24,9 +24,18 @@ const tempVec = new Vector3()
 const tempCamTarget = new Vector3()
 const tempCamPosition = new Vector3()
 const tempBodyPos = new Vector3()
+const tempColor = new Color()
+const warningColor = new Color('#9d291f')
 
-const getPalette = (damage: number) =>
-  DAMAGE_COLORS.find((entry) => damage <= entry.threshold) ?? DAMAGE_COLORS[DAMAGE_COLORS.length - 1]
+const getCarPalette = (baseHex: string, damage: number) => {
+  const t = Math.min(1, Math.max(0, damage / MAX_DAMAGE))
+  const body = tempColor.set(baseHex).clone().lerp(warningColor, t * 0.65)
+  const accent = tempColor.set(baseHex).clone().lerp(new Color('#f2f2f2'), 0.75 - t * 0.35)
+  return {
+    body: `#${body.getHexString()}`,
+    accent: `#${accent.getHexString()}`,
+  }
+}
 
 const getDamageForSpeed = (speed: number, hardHit: boolean) => {
   if (!hardHit) {
@@ -60,6 +69,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
 
   const damage = useGameStore((state) => state.damage)
   const status = useGameStore((state) => state.status)
+  const engineMuted = useGameStore((state) => state.engineMuted)
+  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const restartToken = useGameStore((state) => state.restartToken)
   const addDamage = useGameStore((state) => state.addDamage)
   const addScore = useGameStore((state) => state.addScore)
@@ -68,7 +79,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const triggerHitFx = useGameStore((state) => state.triggerHitFx)
   const restartRun = useGameStore((state) => state.restartRun)
 
-  const palette = useMemo(() => getPalette(damage), [damage])
+  const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
 
   useEffect(() => {
@@ -122,6 +133,16 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     }
   }, [setKeyboardInput])
 
+  useEffect(() => {
+    setEngineMuted(engineMuted)
+  }, [engineMuted])
+
+  useEffect(() => {
+    return () => {
+      stopEngineSound()
+    }
+  }, [])
+
   useFrame((state, delta) => {
     const body = bodyRef.current
     if (!body) {
@@ -132,6 +153,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     onPlayerPosition([pos.x, pos.y, pos.z])
 
     if (status === 'lost') {
+      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road' })
       if (inputRef.current.restart) {
         restartRun()
       }
@@ -152,16 +174,19 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
 
     const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
     const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
+    const absX = Math.abs(pos.x)
+    const absZ = Math.abs(pos.z)
+    const onRoad = (absX <= ROAD_OUTER_HALF && absZ <= ROAD_OUTER_HALF) && !(absX < ROAD_INNER_HALF && absZ < ROAD_INNER_HALF)
 
     const throttle = Number(input.forward) - Number(input.backward)
-    const acceleration = throttle >= 0 ? 20 : 14
+    const acceleration = throttle >= 0 ? (onRoad ? 20 : 13.5) : onRoad ? 14 : 9.5
     let nextForwardSpeed = forwardSpeed + throttle * acceleration * delta
 
-    const rollingDrag = throttle === 0 ? 0.985 : 0.996
+    const rollingDrag = throttle === 0 ? (onRoad ? 0.985 : 0.97) : onRoad ? 0.996 : 0.988
     nextForwardSpeed *= rollingDrag
 
-    const maxForwardSpeed = 12
-    const maxReverseSpeed = -5
+    const maxForwardSpeed = onRoad ? 12 : 7.4
+    const maxReverseSpeed = onRoad ? -5 : -3.2
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
     const gripLerp = Math.min(1, delta * 7.5)
@@ -176,6 +201,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const nextVx = forwardX * nextForwardSpeed + rightX * nextLateralSpeed
     const nextVz = forwardZ * nextForwardSpeed + rightZ * nextLateralSpeed
     body.setLinvel({ x: nextVx, y: linVel.y, z: nextVz }, true)
+
+    const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
+    updateEngineSound({
+      speed: Math.abs(nextForwardSpeed),
+      throttle: Math.abs(throttle),
+      direction: engineDirection,
+      surface: onRoad ? 'road' : 'grass',
+    })
 
     const camPosSmoothing = 1 - Math.exp(-delta * 9)
     const camForwardSmoothing = 1 - Math.exp(-delta * 12)

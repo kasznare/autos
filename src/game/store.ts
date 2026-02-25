@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { MAX_DAMAGE } from './config'
+import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
 import { createInputState } from './keys'
 import type { DriveInputState } from './keys'
 
@@ -11,12 +11,16 @@ type GameState = {
   bestScore: number
   status: GameStatus
   restartToken: number
+  engineMuted: boolean
+  selectedCarColor: string
   keyboardInput: DriveInputState
   hitFxToken: number
   hitFxStrength: number
   addDamage: (amount: number) => void
   addScore: (amount: number) => void
   repair: (amount: number) => void
+  toggleEngineMuted: () => void
+  setSelectedCarColor: (color: string) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
   triggerHitFx: (strength: number) => void
   restartRun: () => void
@@ -28,6 +32,8 @@ export const useGameStore = create<GameState>((set) => ({
   bestScore: 0,
   status: 'running',
   restartToken: 0,
+  engineMuted: true,
+  selectedCarColor: CAR_COLOR_OPTIONS[0],
   keyboardInput: createInputState(),
   hitFxToken: 0,
   hitFxStrength: 0,
@@ -68,6 +74,16 @@ export const useGameStore = create<GameState>((set) => ({
         damage: Math.max(0, state.damage - amount),
       }
     }),
+  toggleEngineMuted: () =>
+    set((state) => ({
+      ...state,
+      engineMuted: !state.engineMuted,
+    })),
+  setSelectedCarColor: (color) =>
+    set((state) => ({
+      ...state,
+      selectedCarColor: color,
+    })),
   setKeyboardInput: (key, active) =>
     set((state) => ({
       ...state,

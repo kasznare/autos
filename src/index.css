@@ -59,8 +59,21 @@ body {
 
 .hud-top-row {
   display: flex;
-  justify-content: space-between;
-  gap: 0.8rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.hud-panel {
+  align-self: flex-end;
+  width: min(300px, 72vw);
+  background: rgba(240, 250, 255, 0.83);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 1rem;
+  padding: 0.55rem 0.65rem;
+  box-shadow: 0 12px 26px rgba(10, 44, 70, 0.2);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
 }
 
 .hud-card {
@@ -73,16 +86,65 @@ body {
   font-size: 1.1rem;
 }
 
+.hud-toggle {
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.92);
+  border: 3px solid #ffffff;
+  box-shadow: 0 8px 20px rgba(20, 69, 92, 0.2);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  font-weight: 800;
+  font-size: 1rem;
+  color: #10303f;
+}
+
 .damage-wrap {
+  margin-top: 0.45rem;
+  width: 100%;
+}
+
+.damage-wrap-center {
+  position: absolute;
+  top: 33%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   align-self: center;
   width: min(520px, 90vw);
+  margin-top: 0;
+}
+
+.color-picker {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 3px 8px rgba(10, 31, 50, 0.24);
+}
+
+.color-swatch.active {
+  outline: 3px solid #fff5b3;
+  outline-offset: 1px;
 }
 
 .damage-label {
+  width: fit-content;
+  margin: 0 auto;
   text-align: center;
   font-weight: 800;
-  color: #083451;
-  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.75);
+  color: #ffffff;
+  text-shadow: 0 2px 6px rgba(4, 17, 29, 0.7);
+  background: rgba(8, 39, 58, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
 }
 
 .damage-track {
@@ -101,12 +163,16 @@ body {
 }
 
 .instructions {
-  align-self: center;
+  margin-top: 0.4rem;
+  align-self: flex-end;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
   background: rgba(255, 255, 255, 0.9);
   border-radius: 999px;
   border: 2px solid #ffffff;
   padding: 0.2rem 0.8rem;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 700;
   color: #245267;
 }
@@ -204,6 +270,11 @@ body {
 
   .hud-card {
     font-size: 0.95rem;
+  }
+
+  .hud-toggle {
+    font-size: 0.9rem;
+    padding: 0.3rem 0.72rem;
   }
 
   .instructions {
