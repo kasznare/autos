@@ -16,13 +16,14 @@ type GameState = {
   keyboardInput: DriveInputState
   hitFxToken: number
   hitFxStrength: number
+  lastHitLabel: string
   addDamage: (amount: number) => void
   addScore: (amount: number) => void
   repair: (amount: number) => void
   toggleEngineMuted: () => void
   setSelectedCarColor: (color: string) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
-  triggerHitFx: (strength: number) => void
+  triggerHitFx: (strength: number, label?: string) => void
   restartRun: () => void
 }
 
@@ -37,6 +38,7 @@ export const useGameStore = create<GameState>((set) => ({
   keyboardInput: createInputState(),
   hitFxToken: 0,
   hitFxStrength: 0,
+  lastHitLabel: '',
   addDamage: (amount) =>
     set((state) => {
       if (state.status === 'lost') {
@@ -89,11 +91,12 @@ export const useGameStore = create<GameState>((set) => ({
       ...state,
       keyboardInput: { ...state.keyboardInput, [key]: active },
     })),
-  triggerHitFx: (strength) =>
+  triggerHitFx: (strength, label = '') =>
     set((state) => ({
       ...state,
       hitFxToken: state.hitFxToken + 1,
       hitFxStrength: Math.max(0.15, Math.min(1, strength)),
+      lastHitLabel: label,
     })),
   restartRun: () =>
     set((state) => ({

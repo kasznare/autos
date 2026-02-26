@@ -52,13 +52,12 @@ export const Hud = () => {
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
-  const hitFxStrength = useGameStore((state) => state.hitFxStrength)
+  const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
-  const hitOpacity = hitFxToken === 0 ? 0 : Math.min(0.38, 0.12 + hitFxStrength * 0.24)
 
   useEffect(() => {
     return () => {
@@ -68,11 +67,11 @@ export const Hud = () => {
 
   return (
     <div className="hud-layer">
-      <div
-        key={hitFxToken}
-        className="hit-flash"
-        style={{ ['--hit-opacity' as string]: `${hitOpacity}` }}
-      />
+      {lastHitLabel ? (
+        <div key={`hit-label-${hitFxToken}`} className="hit-label">
+          {lastHitLabel}
+        </div>
+      ) : null}
       <div className="hud-panel">
         <div className="hud-top-row">
           <div className="hud-card">Score: {score}</div>

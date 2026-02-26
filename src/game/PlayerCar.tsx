@@ -7,7 +7,7 @@ import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
-import type { Pickup } from './types'
+import type { CollisionMaterial, Pickup } from './types'
 
 type PlayerCarProps = {
   pickups: Pickup[]
@@ -38,20 +38,32 @@ const getCarPalette = (baseHex: string, damage: number) => {
   }
 }
 
-const getDamageForSpeed = (speed: number, hardHit: boolean) => {
-  if (!hardHit) {
-    return DAMAGE_TIERS.low
-  }
+const getCollisionMaterial = (name: string): CollisionMaterial => {
+  if (name.startsWith('hard-')) return 'hard'
+  if (name.startsWith('medium-')) return 'medium'
+  return 'soft'
+}
 
-  if (speed < 4) {
-    return DAMAGE_TIERS.low
+const getImpactLabel = (material: CollisionMaterial, damageDelta: number, scrape = false) => {
+  if (scrape) {
+    return 'Side scrape'
   }
-
-  if (speed < 8) {
-    return DAMAGE_TIERS.medium
+  if (material === 'soft') {
+    return 'Soft bump'
   }
+  if (material === 'medium') {
+    return damageDelta >= DAMAGE_TIERS.medium ? 'Crate hit' : 'Light hit'
+  }
+  return damageDelta >= DAMAGE_TIERS.high ? 'Big crash' : 'Hard hit'
+}
 
-  return DAMAGE_TIERS.high
+const getDamageForImpact = (speed: number, material: CollisionMaterial, forwardAlignment: number) => {
+  const speedFactor = Math.min(1.25, Math.max(0, speed / 11))
+  const angleFactor = 0.55 + forwardAlignment * 0.75
+  const materialScale = material === 'hard' ? 1.4 : material === 'medium' ? 0.95 : 0.35
+
+  const base = DAMAGE_TIERS.medium * speedFactor * angleFactor * materialScale
+  return Math.max(1, Math.round(base))
 }
 
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: PlayerCarProps) => {
@@ -63,6 +75,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const sputterTimerRef = useRef(0)
   const sputterActiveRef = useRef(false)
   const yawRateRef = useRef(0)
+  const hardContactCountRef = useRef(0)
+  const scrapeDamageTimerRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
@@ -101,6 +115,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     sputterTimerRef.current = 0
     sputterActiveRef.current = false
     yawRateRef.current = 0
+    hardContactCountRef.current = 0
+    scrapeDamageTimerRef.current = 0
     smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
@@ -231,6 +247,17 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const nextVz = forwardZ * nextForwardSpeed + rightZ * nextLateralSpeed
     body.setLinvel({ x: nextVx, y: linVel.y, z: nextVz }, true)
 
+    if (hardContactCountRef.current > 0 && Math.abs(nextForwardSpeed) > 2) {
+      scrapeDamageTimerRef.current += delta
+      if (scrapeDamageTimerRef.current >= 0.28) {
+        scrapeDamageTimerRef.current = 0
+        addDamage(1)
+        triggerHitFx(0.2, getImpactLabel('hard', 1, true))
+      }
+    } else {
+      scrapeDamageTimerRef.current = 0
+    }
+
     const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
     updateEngineSound({
       speed: Math.abs(nextForwardSpeed),
@@ -334,18 +361,42 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
         }
 
         const otherBodyName = payload.other.rigidBodyObject?.name ?? ''
-        const hitIsHard = otherBodyName.startsWith('hard-')
+        const material = getCollisionMaterial(otherBodyName)
+        if (material === 'hard') {
+          hardContactCountRef.current += 1
+        }
 
         const velocity = body.linvel()
         const planarSpeed = Math.hypot(velocity.x, velocity.z)
-        const damageDelta = getDamageForSpeed(planarSpeed, hitIsHard)
+        const rotation = body.rotation()
+        const yaw = Math.atan2(
+          2 * (rotation.w * rotation.y + rotation.x * rotation.z),
+          1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
+        )
+        const forwardX = Math.sin(yaw)
+        const forwardZ = Math.cos(yaw)
+        const speed = Math.max(0.001, planarSpeed)
+        const velocityDirX = velocity.x / speed
+        const velocityDirZ = velocity.z / speed
+        const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
+
+        const damageDelta = getDamageForImpact(planarSpeed, material, forwardAlignment)
         addDamage(damageDelta)
-        playCollisionSound(hitIsHard, planarSpeed)
-        const hitStrength = Math.min(1, Math.max(0.18, planarSpeed / 10 + (hitIsHard ? 0.25 : 0)))
+        playCollisionSound(material === 'hard', planarSpeed)
+        const hitStrength = Math.min(
+          1,
+          Math.max(0.16, planarSpeed / 10 + (material === 'hard' ? 0.25 : material === 'medium' ? 0.1 : 0)),
+        )
         shakeStrengthRef.current = Math.max(shakeStrengthRef.current, hitStrength * 0.45)
         sparkStrengthRef.current = Math.max(sparkStrengthRef.current, hitStrength)
-        triggerHitFx(hitStrength)
+        triggerHitFx(hitStrength, getImpactLabel(material, damageDelta))
         lastDamageAt.current = now
+      }}
+      onCollisionExit={(payload) => {
+        const material = getCollisionMaterial(payload.other.rigidBodyObject?.name ?? '')
+        if (material === 'hard') {
+          hardContactCountRef.current = Math.max(0, hardContactCountRef.current - 1)
+        }
       }}
     >
       <CuboidCollider args={[0.7, 0.35, 1.2]} />

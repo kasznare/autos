@@ -1,13 +1,13 @@
 import { ContactShadows, Environment, Sparkles } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { CuboidCollider, RigidBody } from '@react-three/rapier'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, RepeatWrapping } from 'three'
 import { ROAD_INNER_HALF, ROAD_OUTER_HALF, TRACK_SIZE } from './config'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
-import type { Pickup, WorldObstacle } from './types'
-import { INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
+import type { DestructibleProp, Pickup, WorldObstacle } from './types'
+import { DESTRUCTIBLE_COLORS, DESTRUCTIBLE_SPAWN_POINTS, INITIAL_DESTRUCTIBLES, INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
 
 const MIN_STARS = 5
 const MIN_REPAIRS = 2
@@ -15,6 +15,8 @@ const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
 const MIN_DISTANCE_FROM_PICKUP = 3.2
+const DESTRUCTIBLE_RESPAWN_SECONDS = 3.2
+const DESTRUCTIBLE_BREAK_SPEED = 6.5
 const Ground = () => {
   const groundTexture = useMemo(() => {
     const canvas = document.createElement('canvas')
@@ -181,7 +183,7 @@ const CheckpointGates = () => (
 )
 
 const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
-  <RigidBody type="fixed" colliders={false} name={`${obstacle.hard ? 'hard' : 'soft'}-${obstacle.id}`}>
+  <RigidBody type="fixed" colliders={false} name={`${obstacle.material}-${obstacle.id}`}>
     <mesh position={obstacle.position} castShadow receiveShadow>
       <boxGeometry args={obstacle.size} />
       <meshStandardMaterial color={obstacle.color} />
@@ -199,13 +201,108 @@ const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
     restitution={0.1}
     linearDamping={0.9}
     angularDamping={0.85}
-    name={`soft-${obstacle.id}`}
+    name={`${obstacle.material}-${obstacle.id}`}
   >
     <mesh castShadow receiveShadow>
       <boxGeometry args={obstacle.size} />
       <meshStandardMaterial color={obstacle.color} />
     </mesh>
     <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
+  </RigidBody>
+)
+
+const chunkOffsets: [number, number, number][] = [
+  [-0.22, 0.16, -0.22],
+  [0.22, 0.16, -0.22],
+  [-0.22, 0.16, 0.22],
+  [0.22, 0.16, 0.22],
+  [0, 0.38, 0],
+]
+
+const BrokenDestructible = ({
+  id,
+  position,
+  color,
+  burstSeed,
+}: {
+  id: string
+  position: [number, number, number]
+  color: string
+  burstSeed: number
+}) => {
+  const chunkRefs = useRef<Array<RapierRigidBody | null>>([])
+
+  useEffect(() => {
+    chunkRefs.current.forEach((body, idx) => {
+      if (!body) return
+      const spread = 0.85 + ((burstSeed + idx) % 5) * 0.22
+      const dirX = (idx % 2 === 0 ? -1 : 1) * spread
+      const dirZ = idx < 2 ? -spread : spread
+      body.applyImpulse({ x: dirX, y: 1.6 + idx * 0.2, z: dirZ }, true)
+      body.applyTorqueImpulse({ x: spread * 0.4, y: spread * 0.6, z: -spread * 0.5 }, true)
+    })
+  }, [burstSeed])
+
+  return (
+    <group>
+      {chunkOffsets.map((offset, idx) => (
+        <RigidBody
+          key={`${id}-chunk-${idx}-${burstSeed}`}
+          ref={(el) => {
+            chunkRefs.current[idx] = el
+          }}
+          colliders={false}
+          position={[position[0] + offset[0], position[1] + offset[1], position[2] + offset[2]]}
+          mass={0.12}
+          linearDamping={1.3}
+          angularDamping={1.2}
+          name={`soft-${id}-chunk`}
+        >
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[0.24, 0.24, 0.24]} />
+            <meshStandardMaterial color={color} roughness={0.75} />
+          </mesh>
+          <CuboidCollider args={[0.12, 0.12, 0.12]} />
+        </RigidBody>
+      ))}
+    </group>
+  )
+}
+
+const IntactDestructible = ({
+  destructible,
+  onBreak,
+}: {
+  destructible: DestructibleProp
+  onBreak: (id: string) => void
+}) => (
+  <RigidBody
+    colliders={false}
+    position={destructible.position}
+    mass={0.45}
+    friction={0.75}
+    restitution={0.08}
+    linearDamping={0.9}
+    angularDamping={0.85}
+    name={`medium-${destructible.id}`}
+    onCollisionEnter={(payload) => {
+      const otherName = payload.other.rigidBodyObject?.name ?? ''
+      if (!otherName.startsWith('player-car')) {
+        return
+      }
+      const otherBody = payload.other.rigidBody
+      const velocity = otherBody?.linvel?.()
+      const planarSpeed = velocity ? Math.hypot(velocity.x, velocity.z) : 0
+      if (planarSpeed >= DESTRUCTIBLE_BREAK_SPEED) {
+        onBreak(destructible.id)
+      }
+    }}
+  >
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={[0.85, 0.85, 0.85]} />
+      <meshStandardMaterial color={destructible.color} roughness={0.78} />
+    </mesh>
+    <CuboidCollider args={[0.425, 0.425, 0.425]} />
   </RigidBody>
 )
 
@@ -234,6 +331,12 @@ const PickupItem = ({ pickup }: { pickup: Pickup }) => {
 }
 
 const OBSTACLES_FOR_SPAWN = [...STATIC_OBSTACLES, ...MOVABLE_OBSTACLES]
+
+type RuntimeDestructible = DestructibleProp & {
+  phase: 'intact' | 'broken'
+  respawnAt: number | null
+  burstSeed: number
+}
 
 const isSpawnBlocked = (x: number, z: number, playerPosition: [number, number, number], existingPickups: Pickup[]) => {
   const px = playerPosition[0]
@@ -273,15 +376,33 @@ const generateSpawnPosition = (existingPickups: Pickup[], playerPosition: [numbe
   return null
 }
 
+const pickRespawnPoint = (usedIds: Set<string>) => {
+  const available = DESTRUCTIBLE_SPAWN_POINTS.filter((_, idx) => !usedIds.has(`p-${idx}`))
+  if (available.length === 0) {
+    return null
+  }
+  const point = available[Math.floor(Math.random() * available.length)]
+  return point
+}
+
 export const GameScene = () => {
   const damage = useGameStore((state) => state.damage)
   const status = useGameStore((state) => state.status)
   const restartToken = useGameStore((state) => state.restartToken)
   const [pickups, setPickups] = useState<Pickup[]>(() => [...INITIAL_PICKUPS])
+  const [destructibles, setDestructibles] = useState<RuntimeDestructible[]>(() =>
+    INITIAL_DESTRUCTIBLES.map((item, index) => ({
+      ...item,
+      phase: 'intact',
+      respawnAt: null,
+      burstSeed: index,
+    })),
+  )
 
   const playerPositionRef = useRef<[number, number, number]>([0, 0.38, 20])
   const spawnTimerRef = useRef(0)
   const spawnIdRef = useRef(0)
+  const destructibleSeedRef = useRef(0)
   const seenRestartTokenRef = useRef(restartToken)
 
   const collectPickup = useCallback((pickupId: string) => {
@@ -292,6 +413,21 @@ export const GameScene = () => {
     playerPositionRef.current = position
   }, [])
 
+  const breakDestructible = useCallback((id: string) => {
+    setDestructibles((state) =>
+      state.map((item) =>
+        item.id === id && item.phase === 'intact'
+          ? {
+              ...item,
+              phase: 'broken',
+              respawnAt: performance.now() / 1000 + DESTRUCTIBLE_RESPAWN_SECONDS,
+              burstSeed: destructibleSeedRef.current++,
+            }
+          : item,
+      ),
+    )
+  }, [])
+
   useFrame((_, delta) => {
     if (seenRestartTokenRef.current !== restartToken) {
       seenRestartTokenRef.current = restartToken
@@ -299,6 +435,15 @@ export const GameScene = () => {
       spawnIdRef.current = 0
       playerPositionRef.current = [0, 0.38, 20]
       setPickups([...INITIAL_PICKUPS])
+      destructibleSeedRef.current = 0
+      setDestructibles(
+        INITIAL_DESTRUCTIBLES.map((item, index) => ({
+          ...item,
+          phase: 'intact',
+          respawnAt: null,
+          burstSeed: index,
+        })),
+      )
       return
     }
 
@@ -350,6 +495,43 @@ export const GameScene = () => {
 
       return next
     })
+
+    const nowSec = performance.now() / 1000
+    setDestructibles((state) => {
+      let changed = false
+      const usedPoints = new Set<string>()
+      for (const item of state) {
+        if (item.phase === 'intact') {
+          const found = DESTRUCTIBLE_SPAWN_POINTS.findIndex(
+            (point) => point[0] === item.position[0] && point[2] === item.position[2],
+          )
+          if (found >= 0) usedPoints.add(`p-${found}`)
+        }
+      }
+
+      const updated = state.map((item) => {
+        if (item.phase === 'broken' && item.respawnAt !== null && item.respawnAt <= nowSec) {
+          changed = true
+          const point = pickRespawnPoint(usedPoints) ?? item.position
+          const pointIndex = DESTRUCTIBLE_SPAWN_POINTS.findIndex((p) => p[0] === point[0] && p[2] === point[2])
+          if (pointIndex >= 0) usedPoints.add(`p-${pointIndex}`)
+          const respawned: RuntimeDestructible = {
+            ...item,
+            phase: 'intact',
+            respawnAt: null,
+            position: [point[0], 0.7, point[2]] as [number, number, number],
+            color: DESTRUCTIBLE_COLORS[(destructibleSeedRef.current + pointIndex + 1) % DESTRUCTIBLE_COLORS.length],
+          }
+          return respawned
+        }
+        return item
+      })
+
+      if (!changed) {
+        return state
+      }
+      return updated
+    })
   })
 
   return (
@@ -380,6 +562,13 @@ export const GameScene = () => {
       {MOVABLE_OBSTACLES.map((obstacle) => (
         <MovableObstacle obstacle={obstacle} key={`${obstacle.id}-${restartToken}`} />
       ))}
+      {destructibles.map((item) =>
+        item.phase === 'intact' ? (
+          <IntactDestructible key={`${item.id}-intact`} destructible={item} onBreak={breakDestructible} />
+        ) : (
+          <BrokenDestructible key={`${item.id}-broken-${item.burstSeed}`} id={item.id} position={item.position} color={item.color} burstSeed={item.burstSeed} />
+        ),
+      )}
       {pickups.map((pickup) => (
         <PickupItem pickup={pickup} key={pickup.id} />
       ))}
