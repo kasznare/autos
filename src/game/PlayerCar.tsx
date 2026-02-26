@@ -3,8 +3,9 @@ import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
-import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
+import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
+import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
 import type { CollisionMaterial, Pickup } from './types'
@@ -13,10 +14,10 @@ type PlayerCarProps = {
   pickups: Pickup[]
   onCollectPickup: (pickupId: string) => void
   onPlayerPosition: (position: [number, number, number]) => void
+  lowPowerMode?: boolean
 }
 
-const START_POSITION = { x: 0, y: 0.38, z: 20 }
-const START_YAW = Math.PI / 2
+const DEFAULT_START_POSITION = { x: 0, y: 0.38, z: 20 }
 const CAMERA_FOLLOW_DISTANCE = 9.5
 const CAMERA_FOLLOW_HEIGHT = 5.5
 const CAMERA_LOOK_AHEAD = 4.5
@@ -27,6 +28,13 @@ const tempCamPosition = new Vector3()
 const tempBodyPos = new Vector3()
 const tempColor = new Color()
 const warningColor = new Color('#9d291f')
+const normalizeAngleDelta = (angle: number) => {
+  const twoPi = Math.PI * 2
+  let out = angle % twoPi
+  if (out > Math.PI) out -= twoPi
+  if (out < -Math.PI) out += twoPi
+  return out
+}
 
 const getCarPalette = (baseHex: string, damage: number) => {
   const t = Math.min(1, Math.max(0, damage / MAX_DAMAGE))
@@ -66,7 +74,7 @@ const getDamageForImpact = (speed: number, material: CollisionMaterial, forwardA
   return Math.max(1, Math.round(base))
 }
 
-export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: PlayerCarProps) => {
+export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody | null>(null)
   const lastDamageAt = useRef(0)
   const inputRef = useRef(createInputState())
@@ -75,12 +83,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const sputterTimerRef = useRef(0)
   const sputterActiveRef = useRef(false)
   const yawRateRef = useRef(0)
+  const lastYawRef = useRef(0)
+  const stuckSteerTimerRef = useRef(0)
   const hardContactCountRef = useRef(0)
   const scrapeDamageTimerRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
-  const smoothedPosRef = useRef(new Vector3(START_POSITION.x, START_POSITION.y, START_POSITION.z))
+  const smoothedPosRef = useRef(new Vector3(DEFAULT_START_POSITION.x, DEFAULT_START_POSITION.y, DEFAULT_START_POSITION.z))
   const smoothedForwardRef = useRef(new Vector3(0, 0, 1))
   const smoothedTargetRef = useRef(new Vector3(0, 0, 0))
   const { camera } = useThree()
@@ -90,6 +100,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const engineMuted = useGameStore((state) => state.engineMuted)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const selectedMapId = useGameStore((state) => state.selectedMapId)
+  const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
   const restartToken = useGameStore((state) => state.restartToken)
   const addDamage = useGameStore((state) => state.addDamage)
   const addScore = useGameStore((state) => state.addScore)
@@ -100,7 +112,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
 
   const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
   const profile = CAR_PROFILES[selectedCarProfile]
+  const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
+  const startPosition = useMemo(() => {
+    const x = map.startPosition[0]
+    const z = map.startPosition[2]
+    return { x, y: sampleTerrainHeight(map, x, z) + 0.38, z }
+  }, [map])
+  const startYaw = map.startYaw
 
   useEffect(() => {
     const body = bodyRef.current
@@ -108,21 +127,23 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
       return
     }
 
-    body.setTranslation(START_POSITION, true)
+    body.setTranslation(startPosition, true)
     body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-    body.setRotation({ x: 0, y: Math.sin(START_YAW / 2), z: 0, w: Math.cos(START_YAW / 2) }, true)
+    body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
     shakeStrengthRef.current = 0
     sparkStrengthRef.current = 0
     sputterTimerRef.current = 0
     sputterActiveRef.current = false
     yawRateRef.current = 0
+    lastYawRef.current = startYaw
+    stuckSteerTimerRef.current = 0
     hardContactCountRef.current = 0
     scrapeDamageTimerRef.current = 0
-    smoothedPosRef.current.set(START_POSITION.x, START_POSITION.y, START_POSITION.z)
+    smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
     smoothedForwardRef.current.set(0, 0, 1)
-    smoothedTargetRef.current.set(START_POSITION.x, START_POSITION.y + 1.3, START_POSITION.z + CAMERA_LOOK_AHEAD)
-  }, [restartToken])
+    smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
+  }, [restartToken, startPosition, startYaw])
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -175,7 +196,28 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     }
 
     const pos = body.translation()
-    onPlayerPosition([pos.x, pos.y, pos.z])
+    const maxOutOfBounds = map.worldHalf * 1.08
+    if (Math.abs(pos.x) > maxOutOfBounds || Math.abs(pos.z) > maxOutOfBounds) {
+      body.setTranslation(startPosition, true)
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+      yawRateRef.current = 0
+      lastYawRef.current = startYaw
+      stuckSteerTimerRef.current = 0
+      smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
+      smoothedForwardRef.current.set(Math.sin(startYaw), 0, Math.cos(startYaw))
+      smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
+      triggerHitFx(0.22, 'Back on road')
+      onPlayerPosition([startPosition.x, startPosition.y, startPosition.z])
+      return
+    }
+    const terrainY = sampleTerrainHeight(map, pos.x, pos.z) + 0.38
+    const nextY = pos.y + (terrainY - pos.y) * Math.min(1, delta * 7)
+    if (Math.abs(nextY - pos.y) > 0.0008) {
+      body.setTranslation({ x: pos.x, y: nextY, z: pos.z }, true)
+    }
+    onPlayerPosition([pos.x, nextY, pos.z])
 
     if (status === 'lost') {
       updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: profile.engineTone })
@@ -199,9 +241,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
 
     const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
     const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
-    const absX = Math.abs(pos.x)
-    const absZ = Math.abs(pos.z)
-    const onRoad = (absX <= ROAD_OUTER_HALF && absZ <= ROAD_OUTER_HALF) && !(absX < ROAD_INNER_HALF && absZ < ROAD_INNER_HALF)
+    const onRoad = isPointOnRoad(map, pos.x, pos.z)
     const surfaceConfig = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
     const damageRatio = Math.min(1, damage / MAX_DAMAGE)
     const accelScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.accelerationLoss
@@ -244,11 +284,29 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const targetYawRate = turnDirection * steerStrength * 1.55 * reverseSteer * steeringScale * profile.steeringMult
     const yawBlend = Math.min(1, delta * 8)
     yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
-    body.setAngvel({ x: 0, y: yawRateRef.current, z: 0 }, true)
-
-    const nextVx = forwardX * nextForwardSpeed + rightX * nextLateralSpeed
-    const nextVz = forwardZ * nextForwardSpeed + rightZ * nextLateralSpeed
-    body.setLinvel({ x: nextVx, y: linVel.y, z: nextVz }, true)
+    const nextYaw = yaw + yawRateRef.current * delta
+    body.setRotation({ x: 0, y: Math.sin(nextYaw / 2), z: 0, w: Math.cos(nextYaw / 2) }, true)
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+    const yawDelta = Math.abs(normalizeAngleDelta(nextYaw - lastYawRef.current))
+    if (Math.abs(turnDirection) > 0 && Math.abs(nextForwardSpeed) > 2 && yawDelta < 0.0006) {
+      stuckSteerTimerRef.current += delta
+      if (stuckSteerTimerRef.current > 0.45) {
+        const nudgedYaw = nextYaw + turnDirection * 0.03
+        body.setRotation({ x: 0, y: Math.sin(nudgedYaw / 2), z: 0, w: Math.cos(nudgedYaw / 2) }, true)
+        yawRateRef.current = targetYawRate * 0.75
+        stuckSteerTimerRef.current = 0
+      }
+    } else {
+      stuckSteerTimerRef.current = Math.max(0, stuckSteerTimerRef.current - delta * 2)
+    }
+    lastYawRef.current = nextYaw
+    const moveForwardX = Math.sin(nextYaw)
+    const moveForwardZ = Math.cos(nextYaw)
+    const moveRightX = Math.cos(nextYaw)
+    const moveRightZ = -Math.sin(nextYaw)
+    const nextVx = moveForwardX * nextForwardSpeed + moveRightX * nextLateralSpeed
+    const nextVz = moveForwardZ * nextForwardSpeed + moveRightZ * nextLateralSpeed
+    body.setLinvel({ x: nextVx, y: 0, z: nextVz }, true)
 
     if (hardContactCountRef.current > 0 && Math.abs(nextForwardSpeed) > 2) {
       scrapeDamageTimerRef.current += delta
@@ -348,7 +406,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
       ref={bodyRef}
       name={PLAYER_BODY_NAME}
       colliders={false}
-      position={[START_POSITION.x, START_POSITION.y, START_POSITION.z]}
+      position={[startPosition.x, startPosition.y, startPosition.z]}
       enabledRotations={[false, true, false]}
       angularDamping={2.4}
       linearDamping={0.6}
@@ -410,12 +468,19 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     >
       <CuboidCollider args={[0.7, 0.35, 1.2]} />
       <group>
-        <Trail width={0.6} length={3.8} color={palette.body} attenuation={(t) => t * t}>
+        {lowPowerMode ? (
           <mesh castShadow position={[0, 0.2, 0]}>
             <boxGeometry args={[1.4, 0.7, 2.4]} />
             <meshStandardMaterial color={palette.body} metalness={0.3} roughness={0.35} />
           </mesh>
-        </Trail>
+        ) : (
+          <Trail width={0.6} length={3.8} color={palette.body} attenuation={(t) => t * t}>
+            <mesh castShadow position={[0, 0.2, 0]}>
+              <boxGeometry args={[1.4, 0.7, 2.4]} />
+              <meshStandardMaterial color={palette.body} metalness={0.3} roughness={0.35} />
+            </mesh>
+          </Trail>
+        )}
         <mesh castShadow position={[0, 0.62, -0.1]}>
           <boxGeometry args={[1.1, 0.45, 1.1]} />
           <meshStandardMaterial color={palette.accent} roughness={0.5} />
@@ -459,9 +524,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
           </mesh>
         </group>
       ) : null}
-      <group ref={hitSparkRef} position={[0, 0.55, -0.05]} visible={false}>
-        <Sparkles count={12} scale={1.8} size={8} speed={2.4} color="#ffe29f" />
-      </group>
+      {lowPowerMode ? null : (
+        <group ref={hitSparkRef} position={[0, 0.55, -0.05]} visible={false}>
+          <Sparkles count={12} scale={1.8} size={8} speed={2.4} color="#ffe29f" />
+        </group>
+      )}
     </RigidBody>
   )
 }

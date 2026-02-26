@@ -2,9 +2,11 @@ import { create } from 'zustand'
 import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
 import type { CarProfileId } from './config'
 import { createInputState } from './keys'
+import type { MapId } from './maps'
 import type { DriveInputState } from './keys'
 
 type GameStatus = 'running' | 'lost'
+type BatterySaverMode = 'auto' | 'on' | 'off'
 
 type GameState = {
   damage: number
@@ -13,6 +15,9 @@ type GameState = {
   status: GameStatus
   restartToken: number
   engineMuted: boolean
+  batterySaverMode: BatterySaverMode
+  selectedMapId: MapId
+  proceduralMapSeed: number
   selectedCarColor: string
   selectedCarProfile: CarProfileId
   keyboardInput: DriveInputState
@@ -23,6 +28,9 @@ type GameState = {
   addScore: (amount: number) => void
   repair: (amount: number) => void
   toggleEngineMuted: () => void
+  setBatterySaverMode: (mode: BatterySaverMode) => void
+  setSelectedMapId: (mapId: MapId) => void
+  rerollProceduralMap: () => void
   setSelectedCarColor: (color: string) => void
   setSelectedCarProfile: (profile: CarProfileId) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
@@ -37,6 +45,9 @@ export const useGameStore = create<GameState>((set) => ({
   status: 'running',
   restartToken: 0,
   engineMuted: true,
+  batterySaverMode: 'auto',
+  selectedMapId: 'procedural',
+  proceduralMapSeed: 1,
   selectedCarColor: CAR_COLOR_OPTIONS[0],
   selectedCarProfile: 'steady',
   keyboardInput: createInputState(),
@@ -84,6 +95,32 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       ...state,
       engineMuted: !state.engineMuted,
+    })),
+  setBatterySaverMode: (mode) =>
+    set((state) => ({
+      ...state,
+      batterySaverMode: mode,
+    })),
+  setSelectedMapId: (mapId) =>
+    set((state) => ({
+      ...state,
+      selectedMapId: mapId,
+      damage: 0,
+      score: 0,
+      status: 'running',
+      restartToken: state.restartToken + 1,
+      hitFxStrength: 0,
+      proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
+    })),
+  rerollProceduralMap: () =>
+    set((state) => ({
+      ...state,
+      proceduralMapSeed: state.proceduralMapSeed + 1,
+      damage: 0,
+      score: 0,
+      status: 'running',
+      restartToken: state.restartToken + 1,
+      hitFxStrength: 0,
     })),
   setSelectedCarColor: (color) =>
     set((state) => ({

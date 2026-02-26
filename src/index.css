@@ -47,7 +47,8 @@ body {
 .touch-row,
 .touch-btn,
 .hud-toggle,
-.color-swatch {
+.color-swatch,
+.battery-chip {
   -webkit-user-select: none;
   user-select: none;
 }
@@ -112,6 +113,44 @@ body {
   font-size: 1.1rem;
 }
 
+.battery-saver-row {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.battery-saver-label {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #2d5d78;
+}
+
+.battery-saver-picker {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.battery-chip {
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: rgba(255, 255, 255, 0.88);
+  color: #184763;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+
+.battery-chip.active {
+  background: linear-gradient(180deg, #4fb35f, #2f8f45);
+  color: #f6fffb;
+  border-color: #bceec7;
+}
+
 .hud-toggle {
   pointer-events: auto;
   background: rgba(255, 255, 255, 0.92);
@@ -156,6 +195,13 @@ body {
   margin-top: 0.4rem;
 }
 
+.map-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
 .profile-chip {
   font: inherit;
   font-size: 0.82rem;
@@ -171,6 +217,32 @@ body {
   background: linear-gradient(180deg, #5dc8ff, #2699d7);
   color: #f7fcff;
   border-color: #a7e2ff;
+}
+
+.map-chip,
+.map-reroll {
+  font: inherit;
+  font-size: 0.77rem;
+  font-weight: 800;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: rgba(255, 255, 255, 0.88);
+  color: #184763;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+
+.map-chip.active {
+  background: linear-gradient(180deg, #ffcb5a, #ed9d21);
+  color: #fffaf2;
+  border-color: #ffe3ad;
+}
+
+.map-reroll {
+  background: linear-gradient(180deg, #67ce74, #349c49);
+  color: #f2fff4;
+  border-color: #bbefc3;
 }
 
 .color-swatch {

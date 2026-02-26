@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { CAR_COLOR_OPTIONS, CAR_PROFILE_ORDER, CAR_PROFILES, MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
+import { MAP_LABELS, MAP_ORDER } from './maps'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
 
@@ -49,13 +50,18 @@ export const Hud = () => {
   const bestScore = useGameStore((state) => state.bestScore)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
+  const batterySaverMode = useGameStore((state) => state.batterySaverMode)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const selectedMapId = useGameStore((state) => state.selectedMapId)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
+  const setBatterySaverMode = useGameStore((state) => state.setBatterySaverMode)
+  const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
+  const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
   const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
   const setSelectedCarProfile = useGameStore((state) => state.setSelectedCarProfile)
 
@@ -82,6 +88,32 @@ export const Hud = () => {
             Sound: {engineMuted ? 'Off' : 'On'}
           </button>
         </div>
+        <div className="battery-saver-row">
+          <span className="battery-saver-label">Battery Saver</span>
+          <div className="battery-saver-picker">
+            <button
+              type="button"
+              className={`battery-chip${batterySaverMode === 'auto' ? ' active' : ''}`}
+              onClick={() => setBatterySaverMode('auto')}
+            >
+              Auto
+            </button>
+            <button
+              type="button"
+              className={`battery-chip${batterySaverMode === 'off' ? ' active' : ''}`}
+              onClick={() => setBatterySaverMode('off')}
+            >
+              Off
+            </button>
+            <button
+              type="button"
+              className={`battery-chip${batterySaverMode === 'on' ? ' active' : ''}`}
+              onClick={() => setBatterySaverMode('on')}
+            >
+              On
+            </button>
+          </div>
+        </div>
 
         <div className="color-picker">
           {CAR_COLOR_OPTIONS.map((color) => (
@@ -107,6 +139,24 @@ export const Hud = () => {
               {CAR_PROFILES[profileId].label}
             </button>
           ))}
+        </div>
+
+        <div className="map-picker">
+          {MAP_ORDER.map((mapId) => (
+            <button
+              key={mapId}
+              type="button"
+              className={`map-chip${selectedMapId === mapId ? ' active' : ''}`}
+              onClick={() => setSelectedMapId(mapId)}
+            >
+              {MAP_LABELS[mapId]}
+            </button>
+          ))}
+          {selectedMapId === 'procedural' ? (
+            <button type="button" className="map-reroll" onClick={rerollProceduralMap}>
+              New
+            </button>
+          ) : null}
         </div>
 
         <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
