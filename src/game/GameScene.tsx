@@ -766,7 +766,8 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
 
   return (
     <>
-      <ambientLight intensity={0.42} />
+      <ambientLight intensity={lowPowerMode ? 0.54 : 0.42} />
+      {lowPowerMode ? <hemisphereLight intensity={0.28} color="#d8f2ff" groundColor="#6f916a" /> : null}
       <directionalLight
         position={[12, 24, 10]}
         intensity={1.35}

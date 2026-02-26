@@ -415,3 +415,21 @@ body {
     font-size: 1.35rem;
   }
 }
+
+@media (pointer: coarse) and (min-width: 768px) and (max-width: 1366px) {
+  .touch-controls {
+    gap: 0.7rem;
+    margin-bottom: 0.55rem;
+  }
+
+  .touch-row {
+    gap: 0.7rem;
+  }
+
+  .touch-btn {
+    width: 4.5rem;
+    height: 4.5rem;
+    font-size: 2rem;
+    border-radius: 1.05rem;
+  }
+}
