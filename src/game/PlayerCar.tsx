@@ -3,7 +3,7 @@ import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
-import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
+import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME, ROAD_INNER_HALF, ROAD_OUTER_HALF } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
@@ -89,6 +89,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
+  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const restartToken = useGameStore((state) => state.restartToken)
   const addDamage = useGameStore((state) => state.addDamage)
   const addScore = useGameStore((state) => state.addScore)
@@ -98,6 +99,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
   const restartRun = useGameStore((state) => state.restartRun)
 
   const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
+  const profile = CAR_PROFILES[selectedCarProfile]
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
 
   useEffect(() => {
@@ -176,7 +178,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     onPlayerPosition([pos.x, pos.y, pos.z])
 
     if (status === 'lost') {
-      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road' })
+      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: profile.engineTone })
       if (inputRef.current.restart) {
         restartRun()
       }
@@ -222,23 +224,24 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
     const throttleFactor = sputterActiveRef.current && throttle > 0 ? DAMAGE_SPUTTER.throttleFactor : 1
     const effectiveThrottle = throttle * throttleFactor
 
-    const acceleration = (throttle >= 0 ? surfaceConfig.forwardAcceleration : surfaceConfig.reverseAcceleration) * accelScale
+    const acceleration =
+      (throttle >= 0 ? surfaceConfig.forwardAcceleration : surfaceConfig.reverseAcceleration) * accelScale * profile.accelMult
     let nextForwardSpeed = forwardSpeed + effectiveThrottle * acceleration * delta
 
     const rollingDrag = throttle === 0 ? surfaceConfig.coastDrag : surfaceConfig.throttleDrag
     nextForwardSpeed *= rollingDrag
 
-    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale
-    const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.85 + speedScale * 0.15)
+    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * profile.topSpeedMult
+    const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.85 + speedScale * 0.15) * profile.reverseSpeedMult
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
-    const gripLerp = Math.min(1, delta * 7.5 * gripScale * surfaceConfig.gripFactor)
+    const gripLerp = Math.min(1, delta * 7.5 * gripScale * surfaceConfig.gripFactor * profile.gripMult)
     const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
 
     const turnDirection = Number(input.left) - Number(input.right)
     const steerStrength = Math.min(1, Math.abs(nextForwardSpeed) / 5)
     const reverseSteer = nextForwardSpeed < -0.2 ? -0.7 : 1
-    const targetYawRate = turnDirection * steerStrength * 1.55 * reverseSteer * steeringScale
+    const targetYawRate = turnDirection * steerStrength * 1.55 * reverseSteer * steeringScale * profile.steeringMult
     const yawBlend = Math.min(1, delta * 8)
     yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
     body.setAngvel({ x: 0, y: yawRateRef.current, z: 0 }, true)
@@ -251,19 +254,24 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
       scrapeDamageTimerRef.current += delta
       if (scrapeDamageTimerRef.current >= 0.28) {
         scrapeDamageTimerRef.current = 0
-        addDamage(1)
-        triggerHitFx(0.2, getImpactLabel('hard', 1, true))
+        const scrapeDamage = Math.max(1, Math.round(profile.damageTakenMult))
+        addDamage(scrapeDamage)
+        triggerHitFx(0.2, getImpactLabel('hard', scrapeDamage, true))
       }
     } else {
       scrapeDamageTimerRef.current = 0
     }
 
     const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
+    const lateralLoad = Math.min(1, Math.abs(nextLateralSpeed) / 2.4)
+    const engineLoad = Math.min(1, damageRatio * 0.55 + lateralLoad * 0.35 + (onRoad ? 0 : 0.2))
     updateEngineSound({
       speed: Math.abs(nextForwardSpeed),
       throttle: Math.abs(throttle),
       direction: engineDirection,
       surface: onRoad ? 'road' : 'grass',
+      engineLoad,
+      tone: profile.engineTone,
     })
 
     const camPosSmoothing = 1 - Math.exp(-delta * 9)
@@ -344,7 +352,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
       enabledRotations={[false, true, false]}
       angularDamping={2.4}
       linearDamping={0.6}
-      mass={1.2}
+      mass={profile.mass}
       onCollisionEnter={(payload) => {
         if (status === 'lost') {
           return
@@ -381,7 +389,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
         const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
 
         const damageDelta = getDamageForImpact(planarSpeed, material, forwardAlignment)
-        addDamage(damageDelta)
+        const scaledDamage = Math.max(1, Math.round(damageDelta * profile.damageTakenMult))
+        addDamage(scaledDamage)
         playCollisionSound(material === 'hard', planarSpeed)
         const hitStrength = Math.min(
           1,
@@ -389,7 +398,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition }: Player
         )
         shakeStrengthRef.current = Math.max(shakeStrengthRef.current, hitStrength * 0.45)
         sparkStrengthRef.current = Math.max(sparkStrengthRef.current, hitStrength)
-        triggerHitFx(hitStrength, getImpactLabel(material, damageDelta))
+        triggerHitFx(hitStrength, getImpactLabel(material, scaledDamage))
         lastDamageAt.current = now
       }}
       onCollisionExit={(payload) => {

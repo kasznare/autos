@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
+import { CAR_COLOR_OPTIONS, CAR_PROFILE_ORDER, CAR_PROFILES, MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
@@ -50,12 +50,14 @@ export const Hud = () => {
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
+  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
+  const setSelectedCarProfile = useGameStore((state) => state.setSelectedCarProfile)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
 
@@ -91,6 +93,19 @@ export const Hud = () => {
               onClick={() => setSelectedCarColor(color)}
               aria-label={`Select car color ${color}`}
             />
+          ))}
+        </div>
+
+        <div className="profile-picker">
+          {CAR_PROFILE_ORDER.map((profileId) => (
+            <button
+              key={profileId}
+              type="button"
+              className={`profile-chip${selectedCarProfile === profileId ? ' active' : ''}`}
+              onClick={() => setSelectedCarProfile(profileId)}
+            >
+              {CAR_PROFILES[profileId].label}
+            </button>
           ))}
         </div>
 

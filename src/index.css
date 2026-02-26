@@ -149,6 +149,30 @@ body {
   flex-wrap: wrap;
 }
 
+.profile-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.profile-chip {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: rgba(255, 255, 255, 0.88);
+  color: #184763;
+}
+
+.profile-chip.active {
+  background: linear-gradient(180deg, #5dc8ff, #2699d7);
+  color: #f7fcff;
+  border-color: #a7e2ff;
+}
+
 .color-swatch {
   width: 1.5rem;
   height: 1.5rem;

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
+import type { CarProfileId } from './config'
 import { createInputState } from './keys'
 import type { DriveInputState } from './keys'
 
@@ -13,6 +14,7 @@ type GameState = {
   restartToken: number
   engineMuted: boolean
   selectedCarColor: string
+  selectedCarProfile: CarProfileId
   keyboardInput: DriveInputState
   hitFxToken: number
   hitFxStrength: number
@@ -22,6 +24,7 @@ type GameState = {
   repair: (amount: number) => void
   toggleEngineMuted: () => void
   setSelectedCarColor: (color: string) => void
+  setSelectedCarProfile: (profile: CarProfileId) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
   restartRun: () => void
@@ -35,6 +38,7 @@ export const useGameStore = create<GameState>((set) => ({
   restartToken: 0,
   engineMuted: true,
   selectedCarColor: CAR_COLOR_OPTIONS[0],
+  selectedCarProfile: 'steady',
   keyboardInput: createInputState(),
   hitFxToken: 0,
   hitFxStrength: 0,
@@ -85,6 +89,11 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       ...state,
       selectedCarColor: color,
+    })),
+  setSelectedCarProfile: (profile) =>
+    set((state) => ({
+      ...state,
+      selectedCarProfile: profile,
     })),
   setKeyboardInput: (key, active) =>
     set((state) => ({

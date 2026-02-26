@@ -7,6 +7,7 @@ export const ROAD_OUTER_HALF = 23
 export const ROAD_INNER_HALF = 11
 
 export type ControlName = 'forward' | 'backward' | 'left' | 'right' | 'restart'
+export type CarProfileId = 'steady' | 'speedy' | 'heavy'
 
 export const INPUT_MAP: KeyboardControlsEntry<ControlName>[] = [
   { name: 'forward', keys: ['ArrowUp', 'KeyW'] },
@@ -59,3 +60,54 @@ export const DAMAGE_SPUTTER = {
   chance: 0.35,
   throttleFactor: 0.18,
 }
+
+export const CAR_PROFILES: Record<
+  CarProfileId,
+  {
+    label: string
+    accelMult: number
+    topSpeedMult: number
+    reverseSpeedMult: number
+    steeringMult: number
+    gripMult: number
+    damageTakenMult: number
+    mass: number
+    engineTone: 'steady' | 'speedy' | 'heavy'
+  }
+> = {
+  steady: {
+    label: 'Steady',
+    accelMult: 1,
+    topSpeedMult: 1,
+    reverseSpeedMult: 1,
+    steeringMult: 1,
+    gripMult: 1.03,
+    damageTakenMult: 0.9,
+    mass: 1.25,
+    engineTone: 'steady',
+  },
+  speedy: {
+    label: 'Speedy',
+    accelMult: 1.16,
+    topSpeedMult: 1.14,
+    reverseSpeedMult: 1.08,
+    steeringMult: 1.08,
+    gripMult: 0.94,
+    damageTakenMult: 1.2,
+    mass: 1.08,
+    engineTone: 'speedy',
+  },
+  heavy: {
+    label: 'Heavy',
+    accelMult: 0.84,
+    topSpeedMult: 0.9,
+    reverseSpeedMult: 0.88,
+    steeringMult: 0.86,
+    gripMult: 1.08,
+    damageTakenMult: 0.72,
+    mass: 1.62,
+    engineTone: 'heavy',
+  },
+}
+
+export const CAR_PROFILE_ORDER: CarProfileId[] = ['steady', 'speedy', 'heavy']
