@@ -2,7 +2,7 @@ import { Sparkles, Trail } from '@react-three/drei'
 import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
-import { Color, Group, Vector3 } from 'three'
+import { Color, Euler, Group, Quaternion, Vector3 } from 'three'
 import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput } from './keys'
 import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
@@ -23,11 +23,26 @@ const CAMERA_FOLLOW_HEIGHT = 5.5
 const CAMERA_LOOK_AHEAD = 4.5
 
 const tempVec = new Vector3()
+const tempClearVec = new Vector3()
 const tempCamTarget = new Vector3()
 const tempCamPosition = new Vector3()
 const tempBodyPos = new Vector3()
 const tempColor = new Color()
+const tempEuler = new Euler(0, 0, 0, 'YXZ')
+const tempQuat = new Quaternion()
 const warningColor = new Color('#9d291f')
+const TILT_WHEEL_BASE = 1.1
+const TILT_TRACK_HALF = 0.7
+const MAX_TILT = 0.22
+const MIN_BODY_CLEARANCE = 0.08
+const CHASSIS_CONTACT_POINTS: [number, number, number][] = [
+  [-0.62, -0.34, -1.0],
+  [0.62, -0.34, -1.0],
+  [-0.62, -0.34, 1.0],
+  [0.62, -0.34, 1.0],
+  [0, -0.36, -1.05],
+  [0, -0.36, 1.05],
+]
 const normalizeAngleDelta = (angle: number) => {
   const twoPi = Math.PI * 2
   let out = angle % twoPi
@@ -74,6 +89,44 @@ const getDamageForImpact = (speed: number, material: CollisionMaterial, forwardA
   return Math.max(1, Math.round(base))
 }
 
+const computeTerrainTilt = (x: number, z: number, yaw: number, map: ReturnType<typeof getTrackMap>) => {
+  const forwardX = Math.sin(yaw)
+  const forwardZ = Math.cos(yaw)
+  const rightX = Math.cos(yaw)
+  const rightZ = -Math.sin(yaw)
+
+  const frontH = sampleTerrainHeight(map, x + forwardX * TILT_WHEEL_BASE, z + forwardZ * TILT_WHEEL_BASE)
+  const backH = sampleTerrainHeight(map, x - forwardX * TILT_WHEEL_BASE, z - forwardZ * TILT_WHEEL_BASE)
+  const rightH = sampleTerrainHeight(map, x + rightX * TILT_TRACK_HALF, z + rightZ * TILT_TRACK_HALF)
+  const leftH = sampleTerrainHeight(map, x - rightX * TILT_TRACK_HALF, z - rightZ * TILT_TRACK_HALF)
+
+  const pitch = Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.atan2(backH - frontH, TILT_WHEEL_BASE * 2)))
+  const roll = Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.atan2(rightH - leftH, TILT_TRACK_HALF * 2)))
+  return { pitch, roll }
+}
+
+const computeTerrainLift = (
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  map: ReturnType<typeof getTrackMap>,
+  orientation: Quaternion,
+) => {
+  let maxLift = 0
+  for (const point of CHASSIS_CONTACT_POINTS) {
+    tempClearVec.set(point[0], point[1], point[2]).applyQuaternion(orientation)
+    const wx = centerX + tempClearVec.x
+    const wy = centerY + tempClearVec.y
+    const wz = centerZ + tempClearVec.z
+    const terrain = sampleTerrainHeight(map, wx, wz)
+    const neededLift = terrain + MIN_BODY_CLEARANCE - wy
+    if (neededLift > maxLift) {
+      maxLift = neededLift
+    }
+  }
+  return Math.max(0, maxLift)
+}
+
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody | null>(null)
   const lastDamageAt = useRef(0)
@@ -83,6 +136,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const sputterTimerRef = useRef(0)
   const sputterActiveRef = useRef(false)
   const yawRateRef = useRef(0)
+  const pitchRef = useRef(0)
+  const rollRef = useRef(0)
   const lastYawRef = useRef(0)
   const stuckSteerTimerRef = useRef(0)
   const hardContactCountRef = useRef(0)
@@ -120,6 +175,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     return { x, y: sampleTerrainHeight(map, x, z) + 0.38, z }
   }, [map])
   const startYaw = map.startYaw
+  const startTilt = useMemo(() => computeTerrainTilt(startPosition.x, startPosition.z, startYaw, map), [map, startPosition.x, startPosition.z, startYaw])
 
   useEffect(() => {
     const body = bodyRef.current
@@ -130,12 +186,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     body.setTranslation(startPosition, true)
     body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-    body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+    pitchRef.current = startTilt.pitch
+    rollRef.current = startTilt.roll
+    tempEuler.set(pitchRef.current, startYaw, rollRef.current, 'YXZ')
+    tempQuat.setFromEuler(tempEuler)
+    body.setRotation({ x: tempQuat.x, y: tempQuat.y, z: tempQuat.z, w: tempQuat.w }, true)
     shakeStrengthRef.current = 0
     sparkStrengthRef.current = 0
     sputterTimerRef.current = 0
     sputterActiveRef.current = false
     yawRateRef.current = 0
+    pitchRef.current = startTilt.pitch
+    rollRef.current = startTilt.roll
     lastYawRef.current = startYaw
     stuckSteerTimerRef.current = 0
     hardContactCountRef.current = 0
@@ -143,7 +205,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
-  }, [restartToken, startPosition, startYaw])
+  }, [restartToken, startPosition, startTilt.pitch, startTilt.roll, startYaw])
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -201,7 +263,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       body.setTranslation(startPosition, true)
       body.setLinvel({ x: 0, y: 0, z: 0 }, true)
       body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-      body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+      pitchRef.current = startTilt.pitch
+      rollRef.current = startTilt.roll
+      tempEuler.set(pitchRef.current, startYaw, rollRef.current, 'YXZ')
+      tempQuat.setFromEuler(tempEuler)
+      body.setRotation({ x: tempQuat.x, y: tempQuat.y, z: tempQuat.z, w: tempQuat.w }, true)
       yawRateRef.current = 0
       lastYawRef.current = startYaw
       stuckSteerTimerRef.current = 0
@@ -214,10 +280,6 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
     const terrainY = sampleTerrainHeight(map, pos.x, pos.z) + 0.38
     const nextY = pos.y + (terrainY - pos.y) * Math.min(1, delta * 7)
-    if (Math.abs(nextY - pos.y) > 0.0008) {
-      body.setTranslation({ x: pos.x, y: nextY, z: pos.z }, true)
-    }
-    onPlayerPosition([pos.x, nextY, pos.z])
 
     if (status === 'lost') {
       updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: profile.engineTone })
@@ -284,21 +346,38 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const targetYawRate = turnDirection * steerStrength * 1.55 * reverseSteer * steeringScale * profile.steeringMult
     const yawBlend = Math.min(1, delta * 8)
     yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
-    const nextYaw = yaw + yawRateRef.current * delta
-    body.setRotation({ x: 0, y: Math.sin(nextYaw / 2), z: 0, w: Math.cos(nextYaw / 2) }, true)
+    let nextYaw = yaw + yawRateRef.current * delta
+    const targetTilt = computeTerrainTilt(pos.x, pos.z, nextYaw, map)
+    const tiltBlend = Math.min(1, delta * 6)
+    pitchRef.current += (targetTilt.pitch - pitchRef.current) * tiltBlend
+    rollRef.current += (targetTilt.roll - rollRef.current) * tiltBlend
+    tempEuler.set(pitchRef.current, nextYaw, rollRef.current, 'YXZ')
+    tempQuat.setFromEuler(tempEuler)
+    body.setRotation({ x: tempQuat.x, y: tempQuat.y, z: tempQuat.z, w: tempQuat.w }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
     const yawDelta = Math.abs(normalizeAngleDelta(nextYaw - lastYawRef.current))
     if (Math.abs(turnDirection) > 0 && Math.abs(nextForwardSpeed) > 2 && yawDelta < 0.0006) {
       stuckSteerTimerRef.current += delta
       if (stuckSteerTimerRef.current > 0.45) {
         const nudgedYaw = nextYaw + turnDirection * 0.03
-        body.setRotation({ x: 0, y: Math.sin(nudgedYaw / 2), z: 0, w: Math.cos(nudgedYaw / 2) }, true)
+        tempEuler.set(pitchRef.current, nudgedYaw, rollRef.current, 'YXZ')
+        tempQuat.setFromEuler(tempEuler)
+        body.setRotation({ x: tempQuat.x, y: tempQuat.y, z: tempQuat.z, w: tempQuat.w }, true)
+        nextYaw = nudgedYaw
         yawRateRef.current = targetYawRate * 0.75
         stuckSteerTimerRef.current = 0
       }
     } else {
       stuckSteerTimerRef.current = Math.max(0, stuckSteerTimerRef.current - delta * 2)
     }
+
+    const lift = computeTerrainLift(pos.x, nextY, pos.z, map, tempQuat)
+    const finalY = nextY + lift
+    if (Math.abs(finalY - pos.y) > 0.0008 || lift > 0.0001) {
+      body.setTranslation({ x: pos.x, y: finalY, z: pos.z }, true)
+    }
+    onPlayerPosition([pos.x, finalY, pos.z])
+
     lastYawRef.current = nextYaw
     const moveForwardX = Math.sin(nextYaw)
     const moveForwardZ = Math.cos(nextYaw)
@@ -336,7 +415,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const camForwardSmoothing = 1 - Math.exp(-delta * 12)
     const camTargetSmoothing = 1 - Math.exp(-delta * 11)
 
-    tempBodyPos.set(pos.x, pos.y, pos.z)
+    tempBodyPos.set(pos.x, finalY, pos.z)
     smoothedPosRef.current.lerp(tempBodyPos, camPosSmoothing)
     tempVec.set(forwardX, 0, forwardZ)
     smoothedForwardRef.current.lerp(tempVec, camForwardSmoothing).normalize()
@@ -407,7 +486,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       name={PLAYER_BODY_NAME}
       colliders={false}
       position={[startPosition.x, startPosition.y, startPosition.z]}
-      enabledRotations={[false, true, false]}
+      enabledRotations={[true, true, true]}
       angularDamping={2.4}
       linearDamping={0.6}
       mass={profile.mass}
