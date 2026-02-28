@@ -78,20 +78,43 @@ const isPathRoadAt = (x: number, z: number, points: TrackPoint[], roadWidth: num
   return false
 }
 
-const getPathRoadDistance = (x: number, z: number, points: TrackPoint[]) => {
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+
+const smoothStep = (edge0: number, edge1: number, x: number) => {
+  const t = clamp01((x - edge0) / Math.max(0.0001, edge1 - edge0))
+  return t * t * (3 - 2 * t)
+}
+
+const getPathRoadProximity = (x: number, z: number, points: TrackPoint[]) => {
   if (points.length < 2) {
-    return Infinity
+    return { distance: Infinity, signedDistance: 0 }
   }
   let minDist = Infinity
+  let signedDistance = 0
   for (let i = 0; i < points.length; i += 1) {
     const a = points[i]
     const b = points[(i + 1) % points.length]
-    const dist = distanceToSegment(x, z, a[0], a[1], b[0], b[1])
+    const abx = b[0] - a[0]
+    const abz = b[1] - a[1]
+    const apx = x - a[0]
+    const apz = z - a[1]
+    const denom = abx * abx + abz * abz
+    if (denom <= 0.0001) {
+      continue
+    }
+    const t = Math.max(0, Math.min(1, (apx * abx + apz * abz) / denom))
+    const cx = a[0] + abx * t
+    const cz = a[1] + abz * t
+    const dx = x - cx
+    const dz = z - cz
+    const dist = Math.hypot(dx, dz)
     if (dist < minDist) {
       minDist = dist
+      const cross = abx * dz - abz * dx
+      signedDistance = dist * (cross >= 0 ? 1 : -1)
     }
   }
-  return minDist
+  return { distance: minDist, signedDistance }
 }
 
 export const isPointOnRoad = (map: TrackMap, x: number, z: number) => {
@@ -112,17 +135,21 @@ export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
   if (map.shape === 'path') {
     const ridgeA = Math.abs(Math.sin(x * f * 1.6) * Math.cos(z * f * 1.2))
     const ridgeB = Math.abs(Math.sin((x - z) * f * 0.86))
-    const mountain = (ridgeA * 0.9 + ridgeB * 0.7) * map.terrainAmplitude * 1.45
+    const mountain = (ridgeA * 0.9 + ridgeB * 0.7) * map.terrainAmplitude * 1.05
     height += mountain
+    const roadInfo = getPathRoadProximity(x, z, map.roadPath)
+    const sideSlopeRange = map.roadWidth * 2.2
+    const sideSlopeFade = 1 - smoothStep(map.roadWidth * 0.45, sideSlopeRange, roadInfo.distance)
+    const sideSlopeNorm = Math.max(-1, Math.min(1, roadInfo.signedDistance / Math.max(0.001, map.roadWidth * 0.9)))
+    const sideSlope = sideSlopeNorm * map.terrainAmplitude * 0.06 * sideSlopeFade
     const roadBase =
       (Math.sin(x * f * 0.19) * 0.55 + Math.cos(z * f * 0.17) * 0.45 + Math.sin((x + z) * f * 0.12) * 0.35) *
       map.terrainAmplitude *
-      0.12
-    const dist = getPathRoadDistance(x, z, map.roadPath)
-    const flattenStart = map.roadWidth * 0.78
-    const flattenEnd = map.roadWidth * 3.4
-    const t = Math.max(0, Math.min(1, (dist - flattenStart) / Math.max(0.001, flattenEnd - flattenStart)))
-    const blend = t * t * (3 - 2 * t)
+      0.1 +
+      sideSlope
+    const flattenStart = map.roadWidth * 0.68
+    const flattenEnd = map.roadWidth * 4.6
+    const blend = smoothStep(flattenStart, flattenEnd, roadInfo.distance)
     height = roadBase + (height - roadBase) * blend
   }
   return height
@@ -304,7 +331,7 @@ const createProceduralMap = (seed: number): TrackMap => {
     roadPath,
     startPosition: [start[0], 0.38, start[1]],
     startYaw,
-    terrainAmplitude: 9.5,
+    terrainAmplitude: 7.8,
     terrainFrequency: 0.012,
     gates: [
       gateFromPathSegment(roadPath, 2),

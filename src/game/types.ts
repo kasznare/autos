@@ -12,7 +12,7 @@ export type WorldObstacle = {
 export type Pickup = {
   id: string
   position: [number, number, number]
-  type: 'star' | 'repair'
+  type: 'star' | 'repair' | 'part'
 }
 
 export type DestructibleProp = {

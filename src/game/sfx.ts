@@ -1,32 +1,37 @@
 let ctx: AudioContext | null = null
 
-let engineMainOsc: OscillatorNode | null = null
-let engineSubOsc: OscillatorNode | null = null
-let engineHarmOsc: OscillatorNode | null = null
-let surfaceOsc: OscillatorNode | null = null
+let engineIdleEl: HTMLAudioElement | null = null
+let engineLowEl: HTMLAudioElement | null = null
+let engineHighEl: HTMLAudioElement | null = null
+let engineReverseEl: HTMLAudioElement | null = null
 
-let engineFilter: BiquadFilterNode | null = null
-let harmFilter: BiquadFilterNode | null = null
-let surfaceFilter: BiquadFilterNode | null = null
+let engineIdleSource: MediaElementAudioSourceNode | null = null
+let engineLowSource: MediaElementAudioSourceNode | null = null
+let engineHighSource: MediaElementAudioSourceNode | null = null
+let engineReverseSource: MediaElementAudioSourceNode | null = null
 
-let engineGain: GainNode | null = null
-let subGain: GainNode | null = null
-let harmGain: GainNode | null = null
-let surfaceGain: GainNode | null = null
-let masterGain: GainNode | null = null
-let compressor: DynamicsCompressorNode | null = null
+let engineIdleGain: GainNode | null = null
+let engineLowGain: GainNode | null = null
+let engineHighGain: GainNode | null = null
+let engineReverseGain: GainNode | null = null
+let engineMasterGain: GainNode | null = null
+let engineLowShelf: BiquadFilterNode | null = null
+let engineHighShelf: BiquadFilterNode | null = null
+let engineCompressor: DynamicsCompressorNode | null = null
 
 let engineMuted = false
+let engineLoopsStarted = false
 
 type EngineTone = 'steady' | 'speedy' | 'heavy'
 
 const engineState = {
-  rpm: 850,
-  gear: 1,
-  shiftDipTimer: 0,
   lastAudioTime: 0,
   wobblePhase: 0,
+  throttleHold: 0,
+  idleHold: 1,
 }
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 
 const getCtx = () => {
   if (typeof window === 'undefined') {
@@ -44,15 +49,13 @@ const getCtx = () => {
   return ctx
 }
 
-export const unlockAudio = async () => {
-  const audio = getCtx()
-  if (!audio) {
-    return
-  }
-
-  if (audio.state === 'suspended') {
-    await audio.resume()
-  }
+const createLoopElement = (src: string) => {
+  const el = new Audio(src)
+  el.loop = true
+  el.preload = 'auto'
+  el.crossOrigin = 'anonymous'
+  el.volume = 1
+  return el
 }
 
 const ensureEngineLoop = () => {
@@ -62,135 +65,157 @@ const ensureEngineLoop = () => {
   }
 
   if (
-    engineMainOsc &&
-    engineSubOsc &&
-    engineHarmOsc &&
-    surfaceOsc &&
-    engineFilter &&
-    harmFilter &&
-    surfaceFilter &&
-    engineGain &&
-    subGain &&
-    harmGain &&
-    surfaceGain &&
-    masterGain &&
-    compressor
+    engineIdleEl &&
+    engineLowEl &&
+    engineHighEl &&
+    engineReverseEl &&
+    engineIdleSource &&
+    engineLowSource &&
+    engineHighSource &&
+    engineReverseSource &&
+    engineIdleGain &&
+    engineLowGain &&
+    engineHighGain &&
+    engineReverseGain &&
+    engineMasterGain &&
+    engineLowShelf &&
+    engineHighShelf &&
+    engineCompressor
   ) {
+    if (!engineLoopsStarted) {
+      void engineIdleEl.play().catch(() => {})
+      void engineLowEl.play().catch(() => {})
+      void engineHighEl.play().catch(() => {})
+      void engineReverseEl.play().catch(() => {})
+      engineLoopsStarted = true
+    }
+
     return {
       audio,
-      main: engineMainOsc,
-      sub: engineSubOsc,
-      harm: engineHarmOsc,
-      surface: surfaceOsc,
-      engineFilter,
-      harmFilter,
-      surfaceFilter,
-      engineGain,
-      subGain,
-      harmGain,
-      surfaceGain,
-      masterGain,
+      idleEl: engineIdleEl,
+      lowEl: engineLowEl,
+      highEl: engineHighEl,
+      reverseEl: engineReverseEl,
+      idleGain: engineIdleGain,
+      lowGain: engineLowGain,
+      highGain: engineHighGain,
+      reverseGain: engineReverseGain,
+      masterGain: engineMasterGain,
+      lowShelf: engineLowShelf,
+      highShelf: engineHighShelf,
     }
   }
 
-  const main = audio.createOscillator()
-  const sub = audio.createOscillator()
-  const harm = audio.createOscillator()
-  const surface = audio.createOscillator()
+  const idleEl = createLoopElement('/audio/engine/idle.mp3')
+  const lowEl = createLoopElement('/audio/engine/low.mp3')
+  const highEl = createLoopElement('/audio/engine/high.mp3')
+  const reverseEl = createLoopElement('/audio/engine/reverse.mp3')
 
-  const lowpass = audio.createBiquadFilter()
-  const bandpass = audio.createBiquadFilter()
-  const surfaceBand = audio.createBiquadFilter()
+  const idleSource = audio.createMediaElementSource(idleEl)
+  const lowSource = audio.createMediaElementSource(lowEl)
+  const highSource = audio.createMediaElementSource(highEl)
+  const reverseSource = audio.createMediaElementSource(reverseEl)
 
-  const mainVol = audio.createGain()
-  const subVol = audio.createGain()
-  const harmVol = audio.createGain()
-  const surfaceVol = audio.createGain()
-  const masterVol = audio.createGain()
-  const comp = audio.createDynamicsCompressor()
+  const idleGain = audio.createGain()
+  const lowGain = audio.createGain()
+  const highGain = audio.createGain()
+  const reverseGain = audio.createGain()
+  const masterGain = audio.createGain()
+  const lowShelf = audio.createBiquadFilter()
+  const highShelf = audio.createBiquadFilter()
+  const compressor = audio.createDynamicsCompressor()
 
-  main.type = 'sawtooth'
-  sub.type = 'triangle'
-  harm.type = 'square'
-  surface.type = 'square'
+  idleGain.gain.setValueAtTime(0.0001, audio.currentTime)
+  lowGain.gain.setValueAtTime(0.0001, audio.currentTime)
+  highGain.gain.setValueAtTime(0.0001, audio.currentTime)
+  reverseGain.gain.setValueAtTime(0.0001, audio.currentTime)
+  masterGain.gain.setValueAtTime(0.0001, audio.currentTime)
 
-  lowpass.type = 'lowpass'
-  bandpass.type = 'bandpass'
-  surfaceBand.type = 'bandpass'
+  lowShelf.type = 'lowshelf'
+  lowShelf.frequency.setValueAtTime(180, audio.currentTime)
+  lowShelf.gain.setValueAtTime(4.8, audio.currentTime)
 
-  lowpass.frequency.setValueAtTime(900, audio.currentTime)
-  bandpass.frequency.setValueAtTime(2200, audio.currentTime)
-  surfaceBand.frequency.setValueAtTime(180, audio.currentTime)
+  highShelf.type = 'highshelf'
+  highShelf.frequency.setValueAtTime(1800, audio.currentTime)
+  highShelf.gain.setValueAtTime(-6.5, audio.currentTime)
 
-  mainVol.gain.setValueAtTime(0.0001, audio.currentTime)
-  subVol.gain.setValueAtTime(0.0001, audio.currentTime)
-  harmVol.gain.setValueAtTime(0.0001, audio.currentTime)
-  surfaceVol.gain.setValueAtTime(0.0001, audio.currentTime)
-  masterVol.gain.setValueAtTime(0.0001, audio.currentTime)
+  compressor.threshold.setValueAtTime(-17, audio.currentTime)
+  compressor.knee.setValueAtTime(10, audio.currentTime)
+  compressor.ratio.setValueAtTime(2.7, audio.currentTime)
+  compressor.attack.setValueAtTime(0.004, audio.currentTime)
+  compressor.release.setValueAtTime(0.12, audio.currentTime)
 
-  comp.threshold.setValueAtTime(-18, audio.currentTime)
-  comp.knee.setValueAtTime(10, audio.currentTime)
-  comp.ratio.setValueAtTime(2.8, audio.currentTime)
-  comp.attack.setValueAtTime(0.005, audio.currentTime)
-  comp.release.setValueAtTime(0.12, audio.currentTime)
+  idleSource.connect(idleGain)
+  lowSource.connect(lowGain)
+  highSource.connect(highGain)
+  reverseSource.connect(reverseGain)
 
-  main.connect(lowpass)
-  lowpass.connect(mainVol)
-  mainVol.connect(masterVol)
+  idleGain.connect(masterGain)
+  lowGain.connect(masterGain)
+  highGain.connect(masterGain)
+  reverseGain.connect(masterGain)
+  masterGain.connect(lowShelf)
+  lowShelf.connect(highShelf)
+  highShelf.connect(compressor)
+  compressor.connect(audio.destination)
 
-  sub.connect(lowpass)
-  lowpass.connect(subVol)
-  subVol.connect(masterVol)
+  engineIdleEl = idleEl
+  engineLowEl = lowEl
+  engineHighEl = highEl
+  engineReverseEl = reverseEl
 
-  harm.connect(bandpass)
-  bandpass.connect(harmVol)
-  harmVol.connect(masterVol)
+  engineIdleSource = idleSource
+  engineLowSource = lowSource
+  engineHighSource = highSource
+  engineReverseSource = reverseSource
 
-  surface.connect(surfaceBand)
-  surfaceBand.connect(surfaceVol)
-  surfaceVol.connect(masterVol)
+  engineIdleGain = idleGain
+  engineLowGain = lowGain
+  engineHighGain = highGain
+  engineReverseGain = reverseGain
+  engineMasterGain = masterGain
+  engineLowShelf = lowShelf
+  engineHighShelf = highShelf
+  engineCompressor = compressor
 
-  masterVol.connect(comp)
-  comp.connect(audio.destination)
-
-  main.start()
-  sub.start()
-  harm.start()
-  surface.start()
-
-  engineMainOsc = main
-  engineSubOsc = sub
-  engineHarmOsc = harm
-  surfaceOsc = surface
-
-  engineFilter = lowpass
-  harmFilter = bandpass
-  surfaceFilter = surfaceBand
-
-  engineGain = mainVol
-  subGain = subVol
-  harmGain = harmVol
-  surfaceGain = surfaceVol
-  masterGain = masterVol
-  compressor = comp
-
+  void idleEl.play().catch(() => {})
+  void lowEl.play().catch(() => {})
+  void highEl.play().catch(() => {})
+  void reverseEl.play().catch(() => {})
+  engineLoopsStarted = true
   engineState.lastAudioTime = audio.currentTime
 
   return {
     audio,
-    main,
-    sub,
-    harm,
-    surface,
-    engineFilter: lowpass,
-    harmFilter: bandpass,
-    surfaceFilter: surfaceBand,
-    engineGain: mainVol,
-    subGain: subVol,
-    harmGain: harmVol,
-    surfaceGain: surfaceVol,
-    masterGain: masterVol,
+    idleEl,
+    lowEl,
+    highEl,
+    reverseEl,
+    idleGain,
+    lowGain,
+    highGain,
+      reverseGain,
+      masterGain,
+      lowShelf,
+      highShelf,
+    }
   }
+
+export const unlockAudio = async () => {
+  const audio = getCtx()
+  if (!audio) {
+    return
+  }
+
+  if (audio.state === 'suspended') {
+    await audio.resume()
+  }
+
+  ensureEngineLoop()
+}
+
+const smoothPlaybackRate = (el: HTMLAudioElement, target: number, blend: number) => {
+  el.playbackRate += (target - el.playbackRate) * blend
 }
 
 export const updateEngineSound = ({
@@ -213,187 +238,156 @@ export const updateEngineSound = ({
     return
   }
 
-  const {
-    audio,
-    main,
-    sub,
-    harm,
-    surface: surfaceTone,
-    engineFilter: lowpass,
-    harmFilter: bandpass,
-    surfaceFilter: surfaceBand,
-    engineGain: mainVol,
-    subGain: subVol,
-    harmGain: harmVol,
-    surfaceGain: surfaceVol,
-    masterGain: masterVol,
-  } = loop
-
+  const { audio, idleEl, lowEl, highEl, reverseEl, idleGain, lowGain, highGain, reverseGain, masterGain, lowShelf, highShelf } = loop
   const now = audio.currentTime
   const dt = Math.min(0.05, Math.max(0.005, now - engineState.lastAudioTime || 0.016))
   engineState.lastAudioTime = now
 
   if (engineMuted) {
-    masterVol.gain.setTargetAtTime(0.0001, now, 0.04)
-    surfaceVol.gain.setTargetAtTime(0.0001, now, 0.04)
+    masterGain.gain.setTargetAtTime(0.0001, now, 0.05)
     return
   }
 
-  const speedFactor = Math.min(1, Math.max(0, speed / 12))
-  const throttleFactor = Math.min(1, Math.max(0, throttle))
-  const loadFactor = Math.min(1, Math.max(0, engineLoad))
-  const toneBase = tone === 'speedy' ? 1.08 : tone === 'heavy' ? 0.92 : 1
-  const toneSub = tone === 'speedy' ? 0.9 : tone === 'heavy' ? 1.14 : 1
-  const toneHarm = tone === 'speedy' ? 1.22 : tone === 'heavy' ? 0.86 : 1
-  const toneFilter = tone === 'speedy' ? 1.12 : tone === 'heavy' ? 0.9 : 1
-  const toneSurface = tone === 'speedy' ? 1.04 : tone === 'heavy' ? 0.96 : 1
+  const speedFactor = clamp01(speed / 12)
+  const throttleFactor = clamp01(Math.abs(throttle))
+  const loadFactor = clamp01(engineLoad)
+  const surfaceFactor = surface === 'grass' ? 0.85 : 1
+  const maxThrottle = throttleFactor > 0.9 ? 1 : 0
+  const nearIdle = speed < 0.7 && throttleFactor < 0.08 ? 1 : 0
 
-  const gear =
-    direction === 'reverse'
-      ? 0
-      : speedFactor < 0.22
-        ? 1
-        : speedFactor < 0.47
-          ? 2
-          : speedFactor < 0.74
-            ? 3
-            : 4
+  // Track short-term driving intent so constant pedal states (idle/full throttle) have distinct tone.
+  engineState.throttleHold += ((maxThrottle ? 1 : throttleFactor) - engineState.throttleHold) * Math.min(1, dt * 2.8)
+  engineState.idleHold += (nearIdle - engineState.idleHold) * Math.min(1, dt * 3.6)
 
-  if (gear !== engineState.gear) {
-    engineState.gear = gear
-    engineState.shiftDipTimer = 0.11
-  }
+  engineState.wobblePhase += dt * (4 + speedFactor * 10)
+  const wobbleDepth = 1 - engineState.idleHold * 0.7
+  const wobble =
+    (Math.sin(engineState.wobblePhase * 0.61) * 0.02 + Math.sin(engineState.wobblePhase * 1.37) * 0.012) * wobbleDepth
 
-  if (engineState.shiftDipTimer > 0) {
-    engineState.shiftDipTimer = Math.max(0, engineState.shiftDipTimer - dt)
-  }
+  const toneRate = tone === 'speedy' ? 1.07 : tone === 'heavy' ? 0.94 : 1
+  const throttlePush = engineState.throttleHold
+  const idleRate = (0.75 + speedFactor * 0.28 + throttleFactor * 0.05 + throttlePush * 0.02) * toneRate + wobble * 0.25
+  const lowRate = (0.8 + speedFactor * 0.46 + throttleFactor * 0.07 + throttlePush * 0.03) * toneRate + wobble * 0.35
+  const highRate = (0.66 + speedFactor * 0.4 + throttleFactor * 0.11 + loadFactor * 0.05 + throttlePush * 0.05) * toneRate + wobble * 0.2
+  const reverseRate = (0.68 + speedFactor * 0.5 + throttleFactor * 0.13) * toneRate + wobble * 0.25
 
-  const idleRpm = (direction === 'reverse' ? 1000 : 850) * toneBase
-  const rpmRange = (direction === 'reverse' ? 1800 : 4700) * toneBase
-  const targetRpm = idleRpm + speedFactor * rpmRange + throttleFactor * 900 + loadFactor * 400
+  smoothPlaybackRate(idleEl, Math.max(0.62, idleRate), 0.18)
+  smoothPlaybackRate(lowEl, Math.max(0.66, lowRate), 0.18)
+  smoothPlaybackRate(highEl, Math.max(0.58, highRate), 0.18)
+  smoothPlaybackRate(reverseEl, Math.max(0.6, reverseRate), 0.18)
 
-  const rpmBlend = 1 - Math.exp(-dt * (throttleFactor > 0.05 ? 11 : 7))
-  engineState.rpm += (targetRpm - engineState.rpm) * rpmBlend
+  const idleTarget =
+    (0.24 + (1 - speedFactor) * 0.22 + engineState.idleHold * 0.08) * (direction === 'idle' ? 1.12 : 1) * surfaceFactor
+  const lowTarget =
+    (0.14 +
+      Math.max(0, 1 - Math.abs(speedFactor - 0.36) / 0.5) * 0.34 +
+      throttleFactor * 0.065 +
+      throttlePush * 0.035) *
+    surfaceFactor
+  const highTarget =
+    (0.016 + Math.pow(speedFactor, 1.2) * 0.11 + throttleFactor * 0.04 + loadFactor * 0.02 + throttlePush * 0.03) *
+    surfaceFactor
+  const reverseTarget = direction === 'reverse' ? 0.16 + speedFactor * 0.16 + throttleFactor * 0.05 : 0.0001
 
-  if (engineState.shiftDipTimer > 0) {
-    engineState.rpm *= 0.87
-  }
+  const forwardMixScale = direction === 'reverse' ? 0.12 : 1
 
-  engineState.wobblePhase += dt * (6 + speedFactor * 11)
-  const wow = Math.sin(engineState.wobblePhase * 1.7) * 3.5 + Math.sin(engineState.wobblePhase * 0.41) * 1.3
+  idleGain.gain.setTargetAtTime(Math.max(0.0001, idleTarget * forwardMixScale), now, 0.08)
+  lowGain.gain.setTargetAtTime(Math.max(0.0001, lowTarget * forwardMixScale), now, 0.08)
+  highGain.gain.setTargetAtTime(Math.max(0.0001, highTarget * forwardMixScale), now, 0.08)
+  reverseGain.gain.setTargetAtTime(Math.max(0.0001, reverseTarget), now, 0.08)
 
-  const baseTone = (engineState.rpm / 60) * (direction === 'reverse' ? 0.9 : 1) * toneBase
-  const mainFreq = baseTone + wow
-  const subFreq = mainFreq * 0.5 * toneSub
-  const harmFreq = mainFreq * (gear >= 3 ? 3.25 : 2.7) * toneHarm
+  const masterTarget = 0.085 + speedFactor * 0.04 + throttleFactor * 0.016 + throttlePush * 0.015
+  masterGain.gain.setTargetAtTime(masterTarget, now, 0.08)
 
-  const mainGainTarget = (0.03 + speedFactor * 0.05 + throttleFactor * 0.025) * (tone === 'heavy' ? 1.08 : 1)
-  const subGainTarget = (0.018 + speedFactor * 0.028) * (tone === 'heavy' ? 1.22 : tone === 'speedy' ? 0.9 : 1)
-  const harmGainTarget = (0.007 + speedFactor * 0.018 + throttleFactor * 0.01) * (tone === 'speedy' ? 1.22 : tone === 'heavy' ? 0.82 : 1)
-
-  const lowpassTarget = (700 + speedFactor * 1600 + throttleFactor * 600 - loadFactor * 180) * toneFilter
-  const bandpassTarget = (1500 + speedFactor * 2600 + throttleFactor * 420) * toneFilter
-
-  const surfaceGainTarget =
-    surface === 'grass'
-      ? 0.018 + speedFactor * 0.026 + throttleFactor * 0.012
-      : 0.005 + speedFactor * 0.01
-  const surfaceToneFreq = (surface === 'grass' ? 62 + speedFactor * 20 : 118 + speedFactor * 40) * toneSurface
-  const surfaceBandTarget = (surface === 'grass' ? 120 + speedFactor * 70 : 240 + speedFactor * 140) * toneSurface
-
-  const masterTarget = 0.045 + speedFactor * 0.03
-
-  main.frequency.setTargetAtTime(Math.max(50, mainFreq), now, 0.05)
-  sub.frequency.setTargetAtTime(Math.max(28, subFreq), now, 0.07)
-  harm.frequency.setTargetAtTime(Math.max(120, harmFreq), now, 0.06)
-  surfaceTone.frequency.setTargetAtTime(surfaceToneFreq, now, 0.09)
-
-  mainVol.gain.setTargetAtTime(mainGainTarget, now, 0.07)
-  subVol.gain.setTargetAtTime(subGainTarget, now, 0.08)
-  harmVol.gain.setTargetAtTime(harmGainTarget, now, 0.06)
-  surfaceVol.gain.setTargetAtTime(surfaceGainTarget, now, 0.09)
-  masterVol.gain.setTargetAtTime(masterTarget, now, 0.08)
-
-  lowpass.frequency.setTargetAtTime(Math.max(350, lowpassTarget), now, 0.07)
-  bandpass.frequency.setTargetAtTime(Math.max(900, bandpassTarget), now, 0.08)
-  surfaceBand.frequency.setTargetAtTime(surfaceBandTarget, now, 0.1)
+  // Dynamic EQ: keep idle warm, open up a bit at sustained high throttle.
+  lowShelf.gain.setTargetAtTime(5.4 - speedFactor * 1.1 + engineState.idleHold * 0.8, now, 0.16)
+  highShelf.gain.setTargetAtTime(-7 + throttlePush * 3.2 + speedFactor * 1.2, now, 0.16)
 }
 
 export const setEngineMuted = (muted: boolean) => {
   engineMuted = muted
-  if (masterGain && ctx) {
-    masterGain.gain.setTargetAtTime(muted ? 0.0001 : 0.045, ctx.currentTime, 0.05)
-  }
-  if (surfaceGain && ctx) {
-    surfaceGain.gain.setTargetAtTime(muted ? 0.0001 : 0.01, ctx.currentTime, 0.05)
+  if (engineMasterGain && ctx) {
+    engineMasterGain.gain.setTargetAtTime(muted ? 0.0001 : 0.085, ctx.currentTime, 0.05)
   }
 }
 
 export const stopEngineSound = () => {
-  if (engineMainOsc) {
-    engineMainOsc.stop()
-    engineMainOsc.disconnect()
-    engineMainOsc = null
+  if (engineIdleEl) {
+    engineIdleEl.pause()
+    engineIdleEl.currentTime = 0
+    engineIdleEl = null
   }
-  if (engineSubOsc) {
-    engineSubOsc.stop()
-    engineSubOsc.disconnect()
-    engineSubOsc = null
+  if (engineLowEl) {
+    engineLowEl.pause()
+    engineLowEl.currentTime = 0
+    engineLowEl = null
   }
-  if (engineHarmOsc) {
-    engineHarmOsc.stop()
-    engineHarmOsc.disconnect()
-    engineHarmOsc = null
+  if (engineHighEl) {
+    engineHighEl.pause()
+    engineHighEl.currentTime = 0
+    engineHighEl = null
   }
-  if (surfaceOsc) {
-    surfaceOsc.stop()
-    surfaceOsc.disconnect()
-    surfaceOsc = null
-  }
-
-  if (engineFilter) {
-    engineFilter.disconnect()
-    engineFilter = null
-  }
-  if (harmFilter) {
-    harmFilter.disconnect()
-    harmFilter = null
-  }
-  if (surfaceFilter) {
-    surfaceFilter.disconnect()
-    surfaceFilter = null
+  if (engineReverseEl) {
+    engineReverseEl.pause()
+    engineReverseEl.currentTime = 0
+    engineReverseEl = null
   }
 
-  if (engineGain) {
-    engineGain.disconnect()
-    engineGain = null
+  if (engineIdleSource) {
+    engineIdleSource.disconnect()
+    engineIdleSource = null
   }
-  if (subGain) {
-    subGain.disconnect()
-    subGain = null
+  if (engineLowSource) {
+    engineLowSource.disconnect()
+    engineLowSource = null
   }
-  if (harmGain) {
-    harmGain.disconnect()
-    harmGain = null
+  if (engineHighSource) {
+    engineHighSource.disconnect()
+    engineHighSource = null
   }
-  if (surfaceGain) {
-    surfaceGain.disconnect()
-    surfaceGain = null
-  }
-  if (masterGain) {
-    masterGain.disconnect()
-    masterGain = null
-  }
-  if (compressor) {
-    compressor.disconnect()
-    compressor = null
+  if (engineReverseSource) {
+    engineReverseSource.disconnect()
+    engineReverseSource = null
   }
 
-  engineState.rpm = 850
-  engineState.gear = 1
-  engineState.shiftDipTimer = 0
+  if (engineIdleGain) {
+    engineIdleGain.disconnect()
+    engineIdleGain = null
+  }
+  if (engineLowGain) {
+    engineLowGain.disconnect()
+    engineLowGain = null
+  }
+  if (engineHighGain) {
+    engineHighGain.disconnect()
+    engineHighGain = null
+  }
+  if (engineReverseGain) {
+    engineReverseGain.disconnect()
+    engineReverseGain = null
+  }
+  if (engineMasterGain) {
+    engineMasterGain.disconnect()
+    engineMasterGain = null
+  }
+  if (engineLowShelf) {
+    engineLowShelf.disconnect()
+    engineLowShelf = null
+  }
+  if (engineHighShelf) {
+    engineHighShelf.disconnect()
+    engineHighShelf = null
+  }
+  if (engineCompressor) {
+    engineCompressor.disconnect()
+    engineCompressor = null
+  }
+
+  engineLoopsStarted = false
   engineState.lastAudioTime = 0
   engineState.wobblePhase = 0
+  engineState.throttleHold = 0
+  engineState.idleHold = 1
 }
 
 const playTone = (frequency: number, duration: number, type: OscillatorType, volume: number) => {
@@ -435,11 +429,17 @@ export const playCollisionSound = (hardHit: boolean, speed: number) => {
   playTone(210 * normalized, 0.12, 'square', 0.06)
 }
 
-export const playPickupSound = (type: 'star' | 'repair') => {
+export const playPickupSound = (type: 'star' | 'repair' | 'part') => {
   if (type === 'star') {
     playTone(520, 0.08, 'triangle', 0.07)
     return
   }
 
-  playTone(280, 0.12, 'sine', 0.07)
+  if (type === 'repair') {
+    playTone(280, 0.12, 'sine', 0.07)
+    return
+  }
+
+  playTone(330, 0.08, 'square', 0.06)
+  playTone(420, 0.14, 'triangle', 0.05)
 }

@@ -25,6 +25,8 @@ export const INITIAL_PICKUPS: Pickup[] = [
   { id: 's-5', position: [-18, 0.8, -14], type: 'star' },
   { id: 'r-1', position: [20, 0.8, -3], type: 'repair' },
   { id: 'r-2', position: [-20, 0.8, 4], type: 'repair' },
+  { id: 'p-1', position: [12, 0.8, 16], type: 'part' },
+  { id: 'p-2', position: [-14, 0.8, -18], type: 'part' },
 ]
 
 export const DESTRUCTIBLE_COLORS = ['#d39d58', '#be8744', '#c19352', '#9d7241'] as const

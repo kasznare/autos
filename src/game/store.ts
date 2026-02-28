@@ -12,6 +12,8 @@ type GameState = {
   damage: number
   score: number
   bestScore: number
+  speedKph: number
+  steeringDeg: number
   status: GameStatus
   restartToken: number
   engineMuted: boolean
@@ -20,6 +22,7 @@ type GameState = {
   proceduralMapSeed: number
   selectedCarColor: string
   selectedCarProfile: CarProfileId
+  gamepadConnected: boolean
   keyboardInput: DriveInputState
   hitFxToken: number
   hitFxStrength: number
@@ -34,7 +37,9 @@ type GameState = {
   setSelectedCarColor: (color: string) => void
   setSelectedCarProfile: (profile: CarProfileId) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
+  setGamepadConnected: (connected: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
+  setTelemetry: (speedKph: number, steeringDeg: number) => void
   restartRun: () => void
 }
 
@@ -42,14 +47,17 @@ export const useGameStore = create<GameState>((set) => ({
   damage: 0,
   score: 0,
   bestScore: 0,
+  speedKph: 0,
+  steeringDeg: 0,
   status: 'running',
   restartToken: 0,
   engineMuted: true,
   batterySaverMode: 'auto',
-  selectedMapId: 'procedural',
+  selectedMapId: 'city',
   proceduralMapSeed: 1,
   selectedCarColor: CAR_COLOR_OPTIONS[0],
   selectedCarProfile: 'steady',
+  gamepadConnected: false,
   keyboardInput: createInputState(),
   hitFxToken: 0,
   hitFxStrength: 0,
@@ -110,6 +118,8 @@ export const useGameStore = create<GameState>((set) => ({
       status: 'running',
       restartToken: state.restartToken + 1,
       hitFxStrength: 0,
+      speedKph: 0,
+      steeringDeg: 0,
       proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
     })),
   rerollProceduralMap: () =>
@@ -121,6 +131,8 @@ export const useGameStore = create<GameState>((set) => ({
       status: 'running',
       restartToken: state.restartToken + 1,
       hitFxStrength: 0,
+      speedKph: 0,
+      steeringDeg: 0,
     })),
   setSelectedCarColor: (color) =>
     set((state) => ({
@@ -137,12 +149,23 @@ export const useGameStore = create<GameState>((set) => ({
       ...state,
       keyboardInput: { ...state.keyboardInput, [key]: active },
     })),
+  setGamepadConnected: (connected) =>
+    set((state) => ({
+      ...state,
+      gamepadConnected: connected,
+    })),
   triggerHitFx: (strength, label = '') =>
     set((state) => ({
       ...state,
       hitFxToken: state.hitFxToken + 1,
       hitFxStrength: Math.max(0.15, Math.min(1, strength)),
       lastHitLabel: label,
+    })),
+  setTelemetry: (speedKph, steeringDeg) =>
+    set((state) => ({
+      ...state,
+      speedKph,
+      steeringDeg,
     })),
   restartRun: () =>
     set((state) => ({
@@ -152,5 +175,7 @@ export const useGameStore = create<GameState>((set) => ({
       status: 'running',
       restartToken: state.restartToken + 1,
       hitFxStrength: 0,
+      speedKph: 0,
+      steeringDeg: 0,
     })),
 }))

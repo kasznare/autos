@@ -1,17 +1,20 @@
 import { ContactShadows, Environment, Sparkles } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
+import { CuboidCollider, RapierRigidBody, RigidBody, TrimeshCollider } from '@react-three/rapier'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CanvasTexture, PlaneGeometry, RepeatWrapping } from 'three'
+import { CanvasTexture, Group, PlaneGeometry, RepeatWrapping } from 'three'
+import { CarModel } from './CarModel'
 import { TRACK_SIZE } from './config'
 import { getTrackMap, sampleTerrainHeight, type TrackMap } from './maps'
+import { createRoomChannel, isMultiplayerConfigured, makeClientId, type CarSnapshot, type RoomChannelHandle } from './multiplayer'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
 import type { DestructibleProp, Pickup, WorldObstacle } from './types'
 import { DESTRUCTIBLE_COLORS, DESTRUCTIBLE_SPAWN_POINTS, INITIAL_DESTRUCTIBLES, INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
 
 const MIN_STARS = 5
-const MIN_REPAIRS = 2
+const MIN_REPAIRS = 3
+const MIN_PARTS = 2
 const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
@@ -280,12 +283,23 @@ const ProceduralGround = ({ map }: { map: TrackMap }) => {
     return geometry
   }, [map])
 
+  const terrainColliderArgs = useMemo(() => {
+    const posAttr = terrainGeometry.getAttribute('position')
+    const indexAttr = terrainGeometry.getIndex()
+    if (!indexAttr) {
+      return null
+    }
+    const vertices = Array.from(posAttr.array as Iterable<number>)
+    const indices = Array.from(indexAttr.array as Iterable<number>)
+    return [vertices, indices] as [number[], number[]]
+  }, [terrainGeometry])
+
   return (
     <RigidBody type="fixed" colliders={false}>
       <mesh receiveShadow geometry={terrainGeometry}>
         <meshStandardMaterial map={terrainTexture} roughness={0.95} />
       </mesh>
-      <CuboidCollider args={[map.worldHalf, 0.2, map.worldHalf]} position={[0, -0.2, 0]} />
+      {terrainColliderArgs ? <TrimeshCollider args={terrainColliderArgs} /> : null}
     </RigidBody>
   )
 }
@@ -366,27 +380,32 @@ const Trees = ({
 }) => (
   <group>
     {trees.map((tree) => (
-      <group
+      <RigidBody
         key={tree.id}
+        type="fixed"
+        colliders={false}
+        name={`hard-tree-${tree.id}`}
         position={[tree.position[0], sampleTerrainHeight(map, tree.position[0], tree.position[2]), tree.position[2]]}
-        scale={tree.scale}
       >
-        <mesh castShadow position={[0, 0.7, 0]}>
-          <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
-          <meshStandardMaterial color="#6f4a25" roughness={0.9} />
-        </mesh>
-        {tree.variant === 'round' ? (
-          <mesh castShadow position={[0, 1.75, 0]}>
-            <sphereGeometry args={[0.7, 12, 12]} />
-            <meshStandardMaterial color="#3d8f49" roughness={0.85} />
+        <group scale={tree.scale}>
+          <mesh castShadow position={[0, 0.7, 0]}>
+            <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
+            <meshStandardMaterial color="#6f4a25" roughness={0.9} />
           </mesh>
-        ) : (
-          <mesh castShadow position={[0, 1.8, 0]}>
-            <coneGeometry args={[0.74, 1.35, 12]} />
-            <meshStandardMaterial color="#3f944d" roughness={0.85} />
-          </mesh>
-        )}
-      </group>
+          {tree.variant === 'round' ? (
+            <mesh castShadow position={[0, 1.75, 0]}>
+              <sphereGeometry args={[0.7, 12, 12]} />
+              <meshStandardMaterial color="#3d8f49" roughness={0.85} />
+            </mesh>
+          ) : (
+            <mesh castShadow position={[0, 1.8, 0]}>
+              <coneGeometry args={[0.74, 1.35, 12]} />
+              <meshStandardMaterial color="#3f944d" roughness={0.85} />
+            </mesh>
+          )}
+        </group>
+        <CuboidCollider args={[0.12 * tree.scale, 0.7 * tree.scale, 0.12 * tree.scale]} position={[0, 0.7 * tree.scale, 0]} />
+      </RigidBody>
     ))}
   </group>
 )
@@ -528,6 +547,18 @@ const PickupItem = ({ pickup, lowPowerMode }: { pickup: Pickup; lowPowerMode: bo
     )
   }
 
+  if (pickup.type === 'part') {
+    return (
+      <group position={pickup.position}>
+        {lowPowerMode ? null : <Sparkles count={6} scale={1.2} size={4} speed={0.28} color="#b4d7ff" />}
+        <mesh castShadow>
+          <octahedronGeometry args={[0.52, 0]} />
+          <meshStandardMaterial color="#98acc7" metalness={0.58} roughness={0.34} emissive="#2c3f5f" emissiveIntensity={0.38} />
+        </mesh>
+      </group>
+    )
+  }
+
   return (
     <group position={pickup.position}>
       {lowPowerMode ? null : <Sparkles count={6} scale={1.1} size={4} speed={0.3} color="#9fffbf" />}
@@ -543,6 +574,11 @@ type RuntimeDestructible = DestructibleProp & {
   phase: 'intact' | 'broken'
   respawnAt: number | null
   burstSeed: number
+}
+
+type RemoteCarState = CarSnapshot & {
+  updatedAtMs: number
+  snapshots: Array<{ x: number; y: number; z: number; yaw: number; t: number }>
 }
 
 const isSpawnBlocked = (
@@ -594,6 +630,57 @@ const generateSpawnPosition = (
   return null
 }
 
+const interpolateAngle = (a: number, b: number, t: number) => {
+  let delta = (b - a) % (Math.PI * 2)
+  if (delta > Math.PI) delta -= Math.PI * 2
+  if (delta < -Math.PI) delta += Math.PI * 2
+  return a + delta * t
+}
+
+const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPowerMode: boolean }) => {
+  const groupRef = useRef<Group>(null)
+  const yawRef = useRef(car.yaw)
+  useFrame(() => {
+    const group = groupRef.current
+    if (!group) {
+      return
+    }
+    const snapshots = car.snapshots
+    if (snapshots.length === 0) {
+      return
+    }
+
+    const renderT = performance.now() - 120
+    let prev = snapshots[0]
+    let next = snapshots[snapshots.length - 1]
+    for (let i = snapshots.length - 1; i >= 0; i -= 1) {
+      if (snapshots[i].t <= renderT) {
+        prev = snapshots[i]
+        next = snapshots[Math.min(snapshots.length - 1, i + 1)]
+        break
+      }
+    }
+    const span = Math.max(1, next.t - prev.t)
+    const alpha = Math.max(0, Math.min(1, (renderT - prev.t) / span))
+    const tx = prev.x + (next.x - prev.x) * alpha
+    const ty = prev.y + (next.y - prev.y) * alpha
+    const tz = prev.z + (next.z - prev.z) * alpha
+    const targetYaw = interpolateAngle(prev.yaw, next.yaw, alpha)
+    const follow = 0.28
+    group.position.x += (tx - group.position.x) * follow
+    group.position.y += (ty - group.position.y) * follow
+    group.position.z += (tz - group.position.z) * follow
+    yawRef.current = interpolateAngle(yawRef.current, targetYaw, 0.3)
+    group.rotation.y = yawRef.current
+  })
+
+  return (
+    <group ref={groupRef} position={[car.x, car.y, car.z]} rotation={[0, car.yaw, 0]}>
+      <CarModel bodyColor={car.color} accentColor="#d9e6ff" damage={0} lowPowerMode={lowPowerMode} showTrail={false} />
+    </group>
+  )
+}
+
 const pickRespawnPoint = (usedIds: Set<string>) => {
   const available = DESTRUCTIBLE_SPAWN_POINTS.filter((_, idx) => !usedIds.has(`p-${idx}`))
   if (available.length === 0) {
@@ -603,12 +690,22 @@ const pickRespawnPoint = (usedIds: Set<string>) => {
   return point
 }
 
-export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) => {
+export const GameScene = ({
+  lowPowerMode = false,
+  roomId = null,
+  isRoomHost = false,
+}: {
+  lowPowerMode?: boolean
+  roomId?: string | null
+  isRoomHost?: boolean
+}) => {
   const damage = useGameStore((state) => state.damage)
   const status = useGameStore((state) => state.status)
   const restartToken = useGameStore((state) => state.restartToken)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
+  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
+  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const activeStaticObstacles = useMemo(
     () => (map.sourceId === 'procedural' ? [] : STATIC_OBSTACLES),
@@ -620,6 +717,7 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
   )
   const spawnObstacles = useMemo(() => [...activeStaticObstacles, ...activeMovableObstacles], [activeStaticObstacles, activeMovableObstacles])
   const [pickups, setPickups] = useState<Pickup[]>(() => [...INITIAL_PICKUPS])
+  const [remoteCars, setRemoteCars] = useState<Record<string, RemoteCarState>>({})
   const [destructibles, setDestructibles] = useState<RuntimeDestructible[]>(() =>
     INITIAL_DESTRUCTIBLES.map((item, index) => ({
       ...item,
@@ -634,16 +732,43 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
   const spawnIdRef = useRef(0)
   const destructibleSeedRef = useRef(0)
   const seenRestartTokenRef = useRef(restartToken)
+  const localPlayerIdRef = useRef(makeClientId())
+  const channelRef = useRef<RoomChannelHandle | null>(null)
+  const sendTimerRef = useRef(0)
+  const staleTimerRef = useRef(0)
+  const worldSyncTimerRef = useRef(0)
+  const headingRef = useRef(map.startYaw)
+  const lastHeadingPosRef = useRef<[number, number, number]>(map.startPosition)
+  const multiplayerEnabled = Boolean(roomId && isMultiplayerConfigured())
+  const guestMode = multiplayerEnabled && !isRoomHost
 
-  const collectPickup = useCallback((pickupId: string) => {
+  const applyPickupCollect = useCallback((pickupId: string) => {
     setPickups((state) => state.filter((pickup) => pickup.id !== pickupId))
   }, [])
 
+  const collectPickup = useCallback(
+    (pickupId: string) => {
+      applyPickupCollect(pickupId)
+      if (channelRef.current) {
+        channelRef.current.sendPickupCollect({ pickupId })
+      }
+    },
+    [applyPickupCollect],
+  )
+
   const updatePlayerPosition = useCallback((position: [number, number, number]) => {
+    const prev = lastHeadingPosRef.current
+    const dx = position[0] - prev[0]
+    const dz = position[2] - prev[2]
+    const moved = Math.hypot(dx, dz)
+    if (moved > 0.04) {
+      headingRef.current = Math.atan2(dx, dz)
+      lastHeadingPosRef.current = position
+    }
     playerPositionRef.current = position
   }, [])
 
-  const breakDestructible = useCallback((id: string) => {
+  const applyBreakDestructible = useCallback((id: string, burstSeed?: number) => {
     setDestructibles((state) =>
       state.map((item) =>
         item.id === id && item.phase === 'intact'
@@ -651,19 +776,86 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
               ...item,
               phase: 'broken',
               respawnAt: performance.now() / 1000 + DESTRUCTIBLE_RESPAWN_SECONDS,
-              burstSeed: destructibleSeedRef.current++,
+              burstSeed: burstSeed ?? destructibleSeedRef.current++,
             }
           : item,
       ),
     )
   }, [])
 
+  const breakDestructible = useCallback(
+    (id: string) => {
+      const seed = destructibleSeedRef.current++
+      applyBreakDestructible(id, seed)
+      if (channelRef.current) {
+        channelRef.current.sendBreakDestructible({ id, burstSeed: seed })
+      }
+    },
+    [applyBreakDestructible],
+  )
+
+  useEffect(() => {
+    if (!roomId || !isMultiplayerConfigured()) {
+      channelRef.current?.destroy()
+      channelRef.current = null
+      queueMicrotask(() => setRemoteCars({}))
+      return
+    }
+
+    channelRef.current?.destroy()
+    queueMicrotask(() => setRemoteCars({}))
+    const handle = createRoomChannel(roomId, {
+      onSnapshot: (snapshot) => {
+        if (snapshot.id === localPlayerIdRef.current) {
+          return
+        }
+        setRemoteCars((state) => ({
+          ...state,
+          [snapshot.id]: {
+            ...snapshot,
+            updatedAtMs: performance.now(),
+            snapshots: [
+              ...((state[snapshot.id]?.snapshots ?? []).slice(-19)),
+              { x: snapshot.x, y: snapshot.y, z: snapshot.z, yaw: snapshot.yaw, t: performance.now() },
+            ],
+          },
+        }))
+      },
+      onPickupCollect: ({ pickupId }) => {
+        applyPickupCollect(pickupId)
+      },
+      onBreakDestructible: ({ id, burstSeed }) => {
+        applyBreakDestructible(id, burstSeed)
+      },
+      onWorldSync: (payload) => {
+        if (!guestMode) {
+          return
+        }
+        setPickups(payload.pickups)
+        setDestructibles(payload.destructibles)
+      },
+    })
+    channelRef.current = handle
+
+    return () => {
+      handle?.destroy()
+      if (channelRef.current === handle) {
+        channelRef.current = null
+      }
+    }
+  }, [applyBreakDestructible, applyPickupCollect, guestMode, roomId])
+
   useFrame((_, delta) => {
     if (seenRestartTokenRef.current !== restartToken) {
       seenRestartTokenRef.current = restartToken
       spawnTimerRef.current = 0
       spawnIdRef.current = 0
+      sendTimerRef.current = 0
+      staleTimerRef.current = 0
+      worldSyncTimerRef.current = 0
       playerPositionRef.current = map.startPosition
+      lastHeadingPosRef.current = map.startPosition
+      headingRef.current = map.startYaw
       setPickups([...INITIAL_PICKUPS])
       destructibleSeedRef.current = 0
       setDestructibles(
@@ -681,6 +873,54 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
       return
     }
 
+    if (channelRef.current) {
+      sendTimerRef.current += delta
+      if (sendTimerRef.current >= 1 / 15) {
+        sendTimerRef.current = 0
+        const p = playerPositionRef.current
+        channelRef.current.sendSnapshot({
+          id: localPlayerIdRef.current,
+          x: p[0],
+          y: p[1],
+          z: p[2],
+          yaw: headingRef.current,
+          color: selectedCarColor,
+          profile: selectedCarProfile,
+          sentAt: performance.now(),
+        })
+      }
+
+      staleTimerRef.current += delta
+      if (staleTimerRef.current >= 1) {
+        staleTimerRef.current = 0
+        const nowMs = performance.now()
+        setRemoteCars((state) => {
+          const next: Record<string, RemoteCarState> = {}
+          for (const [id, car] of Object.entries(state)) {
+            if (nowMs - car.updatedAtMs <= 5000) {
+              next[id] = car
+            }
+          }
+          return next
+        })
+      }
+    }
+
+    if (channelRef.current && isRoomHost) {
+      worldSyncTimerRef.current += delta
+      if (worldSyncTimerRef.current >= 0.25) {
+        worldSyncTimerRef.current = 0
+        channelRef.current.sendWorldSync({
+          pickups,
+          destructibles,
+        })
+      }
+    }
+
+    if (guestMode) {
+      return
+    }
+
     spawnTimerRef.current += delta
     if (spawnTimerRef.current < SPAWN_CHECK_SECONDS) {
       return
@@ -690,11 +930,13 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
     setPickups((current) => {
       const starCount = current.filter((pickup) => pickup.type === 'star').length
       const repairCount = current.filter((pickup) => pickup.type === 'repair').length
+      const partCount = current.filter((pickup) => pickup.type === 'part').length
 
       const missingStars = Math.max(0, MIN_STARS - starCount)
       const missingRepairs = Math.max(0, MIN_REPAIRS - repairCount)
+      const missingParts = Math.max(0, MIN_PARTS - partCount)
 
-      if (missingStars === 0 && missingRepairs === 0) {
+      if (missingStars === 0 && missingRepairs === 0 && missingParts === 0) {
         return current
       }
 
@@ -707,9 +949,15 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
       for (let i = 0; i < missingRepairs; i += 1) {
         spawnTypes.push('repair')
       }
+      for (let i = 0; i < missingParts; i += 1) {
+        spawnTypes.push('part')
+      }
 
-      if (damage > 65 && missingRepairs === 0 && Math.random() < 0.35) {
+      if (damage > 50 && missingRepairs === 0 && Math.random() < 0.45) {
         spawnTypes.push('repair')
+      }
+      if (damage > 68 && missingParts === 0 && Math.random() < 0.32) {
+        spawnTypes.push('part')
       }
 
       for (const type of spawnTypes) {
@@ -810,6 +1058,9 @@ export const GameScene = ({ lowPowerMode = false }: { lowPowerMode?: boolean }) 
       )}
       {pickups.map((pickup) => (
         <PickupItem pickup={pickup} lowPowerMode={lowPowerMode} key={pickup.id} />
+      ))}
+      {Object.values(remoteCars).map((car) => (
+        <RemoteCar key={car.id} car={car} lowPowerMode={lowPowerMode} />
       ))}
       <PlayerCar pickups={pickups} onCollectPickup={collectPickup} onPlayerPosition={updatePlayerPosition} lowPowerMode={lowPowerMode} />
     </>

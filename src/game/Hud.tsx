@@ -44,16 +44,29 @@ const TouchButton = ({
   )
 }
 
-export const Hud = () => {
+export const Hud = ({
+  roomId,
+  isRoomHost,
+  multiplayerEnabled,
+  onCreateRoom,
+}: {
+  roomId: string | null
+  isRoomHost: boolean
+  multiplayerEnabled: boolean
+  onCreateRoom: () => void
+}) => {
   const damage = useGameStore((state) => state.damage)
   const score = useGameStore((state) => state.score)
   const bestScore = useGameStore((state) => state.bestScore)
+  const speedKph = useGameStore((state) => state.speedKph)
+  const steeringDeg = useGameStore((state) => state.steeringDeg)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
+  const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
@@ -73,6 +86,17 @@ export const Hud = () => {
     }
   }, [])
 
+  const copyInviteLink = async () => {
+    if (!roomId || typeof window === 'undefined') {
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+    } catch {
+      // Clipboard may fail on insecure origins; ignore and keep gameplay uninterrupted.
+    }
+  }
+
   return (
     <div className="hud-layer">
       {lastHitLabel ? (
@@ -87,6 +111,10 @@ export const Hud = () => {
           <button type="button" className="hud-toggle" onClick={toggleEngineMuted}>
             Sound: {engineMuted ? 'Off' : 'On'}
           </button>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
+          <div className="hud-card hud-card-compact">Steer: {steeringDeg >= 0 ? '+' : ''}{Math.round(steeringDeg)}°</div>
         </div>
         <div className="battery-saver-row">
           <span className="battery-saver-label">Battery Saver</span>
@@ -157,6 +185,28 @@ export const Hud = () => {
               New
             </button>
           ) : null}
+        </div>
+
+        <div className="multiplayer-row">
+          <span className="multiplayer-state">
+            Multiplayer: {multiplayerEnabled ? (roomId ? `${isRoomHost ? 'Host' : 'Guest'} • ${roomId}` : 'Off') : 'Not Configured'}
+          </span>
+          {multiplayerEnabled ? (
+            <div className="multiplayer-actions">
+              {roomId ? (
+                <button type="button" className="map-reroll" onClick={copyInviteLink}>
+                  Copy Link
+                </button>
+              ) : (
+                <button type="button" className="map-reroll" onClick={onCreateRoom}>
+                  Create Room
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+        <div className="multiplayer-row">
+          <span className="multiplayer-state">Controller: {gamepadConnected ? 'Connected' : 'Not Connected'}</span>
         </div>
 
         <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>

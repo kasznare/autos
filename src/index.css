@@ -91,6 +91,14 @@ body {
   gap: 0.5rem;
 }
 
+.hud-telemetry-row {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 .hud-panel {
   align-self: flex-end;
   width: min(300px, 72vw);
@@ -111,6 +119,11 @@ body {
   padding: 0.35rem 0.9rem;
   font-weight: 800;
   font-size: 1.1rem;
+}
+
+.hud-card-compact {
+  font-size: 0.95rem;
+  padding: 0.26rem 0.72rem;
 }
 
 .battery-saver-row {
@@ -200,6 +213,25 @@ body {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.4rem;
+}
+
+.multiplayer-row {
+  margin-top: 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.multiplayer-state {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: #2d5d78;
+}
+
+.multiplayer-actions {
+  display: flex;
+  gap: 0.35rem;
 }
 
 .profile-chip {

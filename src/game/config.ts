@@ -35,23 +35,42 @@ export const DAMAGE_DRIVE_EFFECTS = {
 
 export const DRIVE_SURFACE = {
   road: {
-    forwardAcceleration: 20,
-    reverseAcceleration: 14,
-    forwardTopSpeed: 12,
-    reverseTopSpeed: -5,
+    forwardAcceleration: 30,
+    reverseAcceleration: 16,
+    // Base top speed in m/s (50 km/h).
+    forwardTopSpeed: 13.89,
+    reverseTopSpeed: -3.8,
     coastDrag: 0.985,
     throttleDrag: 0.996,
     gripFactor: 1,
   },
   grass: {
-    forwardAcceleration: 18.5,
-    reverseAcceleration: 12.8,
-    forwardTopSpeed: 10.9,
-    reverseTopSpeed: -4.4,
+    forwardAcceleration: 27,
+    reverseAcceleration: 15,
+    // Slightly slower than road to keep surface feel subtle.
+    forwardTopSpeed: 12.5,
+    reverseTopSpeed: -3.2,
     coastDrag: 0.982,
     throttleDrag: 0.994,
     gripFactor: 0.96,
   },
+}
+
+export const KID_TUNING = {
+  damageTakenScale: 0.62,
+  armorDamageScale: 0.45,
+  armorDurationSec: 9,
+}
+
+export const VEHICLE_PHYSICS = {
+  wheelBase: 2.25,
+  maxSteerRad: 0.5,
+  steerResponse: 8.8,
+  brakeDecel: 20,
+  reverseBrakeDecel: 15.5,
+  engineBrake: 4.5,
+  rollingResistance: 0.35,
+  aeroDrag: 0.01,
 }
 
 export const DAMAGE_SPUTTER = {
@@ -89,7 +108,8 @@ export const CAR_PROFILES: Record<
   speedy: {
     label: 'Speedy',
     accelMult: 1.16,
-    topSpeedMult: 1.14,
+    // ~75 km/h on road (13.89 * 1.5 m/s).
+    topSpeedMult: 1.5,
     reverseSpeedMult: 1.08,
     steeringMult: 1.08,
     gripMult: 0.94,
@@ -100,7 +120,8 @@ export const CAR_PROFILES: Record<
   heavy: {
     label: 'Heavy',
     accelMult: 0.84,
-    topSpeedMult: 0.9,
+    // ~25 km/h on road (13.89 * 0.5 m/s).
+    topSpeedMult: 0.5,
     reverseSpeedMult: 0.88,
     steeringMult: 0.86,
     gripMult: 1.08,
