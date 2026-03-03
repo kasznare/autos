@@ -22,14 +22,20 @@ import {
   type RuntimeDestructible,
 } from './scene'
 import { useGameSceneRuntime } from './scene/useGameSceneRuntime'
+import { useRenderProfiler } from './scene/useRenderProfiler'
+import type { QualityConfig, QualityTier } from './systems'
 import { useGameStore } from './store'
 
 export const GameScene = ({
   lowPowerMode = false,
+  qualityTier = 'high',
+  qualityConfig,
   roomId = null,
   isRoomHost = false,
 }: {
   lowPowerMode?: boolean
+  qualityTier?: QualityTier
+  qualityConfig: QualityConfig
   roomId?: string | null
   isRoomHost?: boolean
 }) => {
@@ -42,6 +48,7 @@ export const GameScene = ({
   const vehicleSpec = useGameStore((state) => state.vehicleSpec)
   const advanceMission = useGameStore((state) => state.advanceMission)
   const setMissionProgress = useGameStore((state) => state.setMissionProgress)
+  const setRenderPerfTelemetry = useGameStore((state) => state.setRenderPerfTelemetry)
 
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
@@ -86,6 +93,8 @@ export const GameScene = ({
     setMissionProgress,
   })
 
+  useRenderProfiler({ onSample: setRenderPerfTelemetry })
+
   return (
     <>
       <ambientLight intensity={lowPowerMode ? 0.54 : 0.42} />
@@ -93,8 +102,8 @@ export const GameScene = ({
       <directionalLight
         position={[12, 24, 10]}
         intensity={1.35}
-        castShadow={!lowPowerMode}
-        shadow-mapSize={lowPowerMode ? [512, 512] : [1024, 1024]}
+        castShadow={qualityConfig.shadows !== false}
+        shadow-mapSize={qualityConfig.directionalShadowMapSize}
         shadow-bias={-0.00018}
         shadow-camera-near={1}
         shadow-camera-far={80}
@@ -103,8 +112,8 @@ export const GameScene = ({
         shadow-camera-top={36}
         shadow-camera-bottom={-36}
       />
-      {!lowPowerMode ? <Environment preset="sunset" /> : null}
-      {!lowPowerMode ? <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={512} color="#2a4f3b" /> : null}
+      {qualityConfig.enableEnvironment ? <Environment preset="sunset" /> : null}
+      {qualityConfig.enableContactShadows ? <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={512} color="#2a4f3b" /> : null}
       {map.shape === 'ring' ? (
         <>
           <Ground worldHalf={map.worldHalf} />
@@ -112,14 +121,14 @@ export const GameScene = ({
           <Curbs outerHalf={map.outerHalf} innerHalf={map.innerHalf} />
         </>
       ) : (
-        <ProceduralGround map={map} />
+        <ProceduralGround map={map} terrainSegments={qualityConfig.terrainSegments} />
       )}
       <CheckpointGates gates={map.gates} />
-      {map.shape === 'path' ? <RoadPath map={map} /> : null}
-      <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} />
-      <Trees trees={map.trees} map={map} />
+      {map.shape === 'path' ? <RoadPath map={map} terrainSegments={qualityConfig.terrainSegments} /> : null}
+      <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} density={qualityConfig.roadsideDensity} castShadows={qualityTier === 'high'} />
+      <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />
       {map.shape === 'path' ? (
-        <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} />
+        <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} updateHz={qualityConfig.trafficUpdateHz} />
       ) : null}
       {activeStaticObstacles.map((obstacle) => (
         <StaticObstacle obstacle={obstacle} key={obstacle.id} />
@@ -139,7 +148,15 @@ export const GameScene = ({
       ))}
       {map.shape === 'path' && map.spawnRules.hazards.critters.enabled
         ? critters.map((critter) => (
-            <ForestCritter key={`${critter.id}-${critter.state}-${critter.burstSeed}`} critter={critter} map={map} onBreak={breakCritter} />
+            <ForestCritter
+              key={`${critter.id}-${critter.state}-${critter.burstSeed}`}
+              critter={critter}
+              map={map}
+              onBreak={breakCritter}
+              playerPositionRef={playerPositionRef}
+              updateHz={qualityConfig.critterUpdateHz}
+              cullDistance={qualityConfig.critterCullDistance}
+            />
           ))
         : null}
       {Object.values(remoteCars).map((car) => (

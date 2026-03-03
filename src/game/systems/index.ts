@@ -1,5 +1,6 @@
 export * from './critters'
 export * from './interpolation'
+export * from './performance'
 export * from './player-car'
 export * from './spawn'
 export * from './traffic'

@@ -1,10 +1,8 @@
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
-import { useMemo } from 'react'
-import { CanvasTexture, PlaneGeometry, RepeatWrapping } from 'three'
+import { useLayoutEffect, useMemo, useRef } from 'react'
+import { CanvasTexture, InstancedMesh, Matrix4, Object3D, PlaneGeometry, RepeatWrapping } from 'three'
 import { TRACK_SIZE } from '../config'
 import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
-
-const TERRAIN_MESH_SEGMENTS = 280
 
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
@@ -123,7 +121,7 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
   )
 }
 
-export const RoadPath = ({ map }: { map: TrackMap }) => {
+export const RoadPath = ({ map, terrainSegments = 280 }: { map: TrackMap; terrainSegments?: number }) => {
   const roadTexture = useMemo(() => {
     const canvas = document.createElement('canvas')
     canvas.width = 1024
@@ -185,7 +183,7 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
 
   const roadGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, TERRAIN_MESH_SEGMENTS, TERRAIN_MESH_SEGMENTS)
+    const geometry = new PlaneGeometry(size, size, terrainSegments, terrainSegments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -196,7 +194,7 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map])
+  }, [map, terrainSegments])
 
   return (
     <mesh receiveShadow geometry={roadGeometry}>
@@ -205,7 +203,7 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
   )
 }
 
-export const ProceduralGround = ({ map }: { map: TrackMap }) => {
+export const ProceduralGround = ({ map, terrainSegments = 280 }: { map: TrackMap; terrainSegments?: number }) => {
   const terrainTexture = useMemo(() => {
     const canvas = document.createElement('canvas')
     canvas.width = 1024
@@ -312,7 +310,7 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
 
   const terrainGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, TERRAIN_MESH_SEGMENTS, TERRAIN_MESH_SEGMENTS)
+    const geometry = new PlaneGeometry(size, size, terrainSegments, terrainSegments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -323,7 +321,7 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map])
+  }, [map, terrainSegments])
 
   const terrainColliderArgs = useMemo(() => {
     const posAttr = terrainGeometry.getAttribute('position')
@@ -428,46 +426,133 @@ export const CheckpointGates = ({
 export const Trees = ({
   trees,
   map,
+  castShadows = true,
 }: {
   trees: { id: string; position: [number, number, number]; scale: number; variant: 'round' | 'cone' }[]
   map: TrackMap
-}) => (
-  <group>
-    {trees.map((tree) => (
-      <RigidBody
-        key={tree.id}
-        type="fixed"
-        colliders={false}
-        name={`hard-tree-${tree.id}`}
-        position={[tree.position[0], sampleTerrainHeight(map, tree.position[0], tree.position[2]), tree.position[2]]}
-      >
-        <group scale={tree.scale}>
-          <mesh castShadow position={[0, 0.7, 0]}>
-            <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
-            <meshStandardMaterial color="#6f4a25" roughness={0.9} />
-          </mesh>
-          {tree.variant === 'round' ? (
-            <mesh castShadow position={[0, 1.75, 0]}>
-              <sphereGeometry args={[0.7, 12, 12]} />
-              <meshStandardMaterial color="#3d8f49" roughness={0.85} />
-            </mesh>
-          ) : (
-            <mesh castShadow position={[0, 1.8, 0]}>
-              <coneGeometry args={[0.74, 1.35, 12]} />
-              <meshStandardMaterial color="#3f944d" roughness={0.85} />
-            </mesh>
-          )}
-        </group>
-        <CuboidCollider args={[0.12 * tree.scale, 0.7 * tree.scale, 0.12 * tree.scale]} position={[0, 0.7 * tree.scale, 0]} />
-      </RigidBody>
-    ))}
-  </group>
-)
+  castShadows?: boolean
+}) => {
+  const treeStates = useMemo(
+    () =>
+      trees.map((tree) => {
+        const y = sampleTerrainHeight(map, tree.position[0], tree.position[2])
+        return {
+          ...tree,
+          y,
+        }
+      }),
+    [map, trees],
+  )
 
-export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) => {
+  const trunkMatrices = useMemo(() => {
+    const matrices: Matrix4[] = []
+    const dummy = new Object3D()
+    for (const tree of treeStates) {
+      dummy.position.set(tree.position[0], tree.y + 0.7 * tree.scale, tree.position[2])
+      dummy.scale.set(tree.scale, tree.scale, tree.scale)
+      dummy.updateMatrix()
+      matrices.push(dummy.matrix.clone())
+    }
+    return matrices
+  }, [treeStates])
+
+  const roundCanopyMatrices = useMemo(() => {
+    const matrices: Matrix4[] = []
+    const dummy = new Object3D()
+    for (const tree of treeStates) {
+      if (tree.variant !== 'round') continue
+      dummy.position.set(tree.position[0], tree.y + 1.75 * tree.scale, tree.position[2])
+      dummy.scale.set(tree.scale, tree.scale, tree.scale)
+      dummy.updateMatrix()
+      matrices.push(dummy.matrix.clone())
+    }
+    return matrices
+  }, [treeStates])
+
+  const coneCanopyMatrices = useMemo(() => {
+    const matrices: Matrix4[] = []
+    const dummy = new Object3D()
+    for (const tree of treeStates) {
+      if (tree.variant !== 'cone') continue
+      dummy.position.set(tree.position[0], tree.y + 1.8 * tree.scale, tree.position[2])
+      dummy.scale.set(tree.scale, tree.scale, tree.scale)
+      dummy.updateMatrix()
+      matrices.push(dummy.matrix.clone())
+    }
+    return matrices
+  }, [treeStates])
+
+  const trunkRef = useRef<InstancedMesh>(null)
+  const roundRef = useRef<InstancedMesh>(null)
+  const coneRef = useRef<InstancedMesh>(null)
+
+  useLayoutEffect(() => {
+    const mesh = trunkRef.current
+    if (!mesh) return
+    trunkMatrices.forEach((matrix, idx) => mesh.setMatrixAt(idx, matrix))
+    mesh.count = trunkMatrices.length
+    mesh.instanceMatrix.needsUpdate = true
+  }, [trunkMatrices])
+
+  useLayoutEffect(() => {
+    const mesh = roundRef.current
+    if (!mesh) return
+    roundCanopyMatrices.forEach((matrix, idx) => mesh.setMatrixAt(idx, matrix))
+    mesh.count = roundCanopyMatrices.length
+    mesh.instanceMatrix.needsUpdate = true
+  }, [roundCanopyMatrices])
+
+  useLayoutEffect(() => {
+    const mesh = coneRef.current
+    if (!mesh) return
+    coneCanopyMatrices.forEach((matrix, idx) => mesh.setMatrixAt(idx, matrix))
+    mesh.count = coneCanopyMatrices.length
+    mesh.instanceMatrix.needsUpdate = true
+  }, [coneCanopyMatrices])
+
+  return (
+    <group>
+      {trunkMatrices.length > 0 ? (
+        <instancedMesh ref={trunkRef} args={[undefined, undefined, trunkMatrices.length]} castShadow={castShadows}>
+          <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
+          <meshStandardMaterial color="#6f4a25" roughness={0.9} />
+        </instancedMesh>
+      ) : null}
+      {roundCanopyMatrices.length > 0 ? (
+        <instancedMesh ref={roundRef} args={[undefined, undefined, roundCanopyMatrices.length]} castShadow={castShadows}>
+          <sphereGeometry args={[0.7, 12, 12]} />
+          <meshStandardMaterial color="#3d8f49" roughness={0.85} />
+        </instancedMesh>
+      ) : null}
+      {coneCanopyMatrices.length > 0 ? (
+        <instancedMesh ref={coneRef} args={[undefined, undefined, coneCanopyMatrices.length]} castShadow={castShadows}>
+          <coneGeometry args={[0.74, 1.35, 12]} />
+          <meshStandardMaterial color="#3f944d" roughness={0.85} />
+        </instancedMesh>
+      ) : null}
+      {treeStates.map((tree) => (
+        <RigidBody key={tree.id} type="fixed" colliders={false} name={`hard-tree-${tree.id}`} position={[tree.position[0], tree.y, tree.position[2]]}>
+          <CuboidCollider args={[0.12 * tree.scale, 0.7 * tree.scale, 0.12 * tree.scale]} position={[0, 0.7 * tree.scale, 0]} />
+        </RigidBody>
+      ))}
+    </group>
+  )
+}
+
+export const RoadsideDetails = ({
+  map,
+  seed,
+  density = 1,
+  castShadows = true,
+}: {
+  map: TrackMap
+  seed: number
+  density?: number
+  castShadows?: boolean
+}) => {
   const details = useMemo(() => {
-    const out: Array<{ id: string; type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
-    const maxItems = map.shape === 'path' ? 180 : 70
+    const out: Array<{ type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
+    const maxItems = Math.max(0, Math.floor((map.shape === 'path' ? 180 : 70) * density))
     const half = map.worldHalf - 4
     for (let i = 0; i < 900 && out.length < maxItems; i += 1) {
       const nx = pseudoNoise(seed + i, 201) * 2 - 1
@@ -481,31 +566,73 @@ export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) 
       const scale = type === 'rock' ? 0.45 + pseudoNoise(seed + i, 204) * 0.95 : 0.4 + pseudoNoise(seed + i, 205) * 1.05
       const y = sampleTerrainHeight(map, x, z)
       out.push({
-        id: `detail-${seed}-${out.length}`,
         type,
         position: [x, y + 0.05, z],
         scale,
       })
     }
     return out
-  }, [map, seed])
+  }, [density, map, seed])
+
+  const rockMatrices = useMemo(() => {
+    const matrices: Matrix4[] = []
+    const dummy = new Object3D()
+    for (const item of details) {
+      if (item.type !== 'rock') continue
+      dummy.position.set(item.position[0], item.position[1], item.position[2])
+      dummy.scale.setScalar(item.scale)
+      dummy.updateMatrix()
+      matrices.push(dummy.matrix.clone())
+    }
+    return matrices
+  }, [details])
+
+  const bushMatrices = useMemo(() => {
+    const matrices: Matrix4[] = []
+    const dummy = new Object3D()
+    for (const item of details) {
+      if (item.type !== 'bush') continue
+      dummy.position.set(item.position[0], item.position[1], item.position[2])
+      dummy.scale.setScalar(item.scale)
+      dummy.updateMatrix()
+      matrices.push(dummy.matrix.clone())
+    }
+    return matrices
+  }, [details])
+
+  const rockRef = useRef<InstancedMesh>(null)
+  const bushRef = useRef<InstancedMesh>(null)
+
+  useLayoutEffect(() => {
+    const mesh = rockRef.current
+    if (!mesh) return
+    rockMatrices.forEach((matrix, idx) => mesh.setMatrixAt(idx, matrix))
+    mesh.count = rockMatrices.length
+    mesh.instanceMatrix.needsUpdate = true
+  }, [rockMatrices])
+
+  useLayoutEffect(() => {
+    const mesh = bushRef.current
+    if (!mesh) return
+    bushMatrices.forEach((matrix, idx) => mesh.setMatrixAt(idx, matrix))
+    mesh.count = bushMatrices.length
+    mesh.instanceMatrix.needsUpdate = true
+  }, [bushMatrices])
 
   return (
     <group>
-      {details.map((item) =>
-        item.type === 'rock' ? (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow receiveShadow>
-            <dodecahedronGeometry args={[0.35, 0]} />
-            <meshStandardMaterial color="#7c8374" roughness={0.93} />
-          </mesh>
-        ) : (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow>
-            <sphereGeometry args={[0.42, 8, 7]} />
-            <meshStandardMaterial color="#4d9f58" roughness={0.88} />
-          </mesh>
-        ),
-      )}
+      {rockMatrices.length > 0 ? (
+        <instancedMesh ref={rockRef} args={[undefined, undefined, rockMatrices.length]} castShadow={castShadows} receiveShadow={castShadows}>
+          <dodecahedronGeometry args={[0.35, 0]} />
+          <meshStandardMaterial color="#7c8374" roughness={0.93} />
+        </instancedMesh>
+      ) : null}
+      {bushMatrices.length > 0 ? (
+        <instancedMesh ref={bushRef} args={[undefined, undefined, bushMatrices.length]} castShadow={castShadows}>
+          <sphereGeometry args={[0.42, 8, 7]} />
+          <meshStandardMaterial color="#4d9f58" roughness={0.88} />
+        </instancedMesh>
+      ) : null}
     </group>
   )
 }
-

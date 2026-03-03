@@ -5,6 +5,7 @@ import { GameScene } from './game/GameScene'
 import { getTrackMap } from './game/maps'
 import { createRoomId, getRoomIdFromUrl, isMultiplayerConfigured, setRoomIdInUrl } from './game/multiplayer'
 import { stopEngineSound } from './game/sfx'
+import { deriveQualityTier, getQualityConfig } from './game/systems'
 import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
 import { GarageOverlay } from './game/ui/builder/GarageOverlay'
@@ -18,6 +19,8 @@ export const App = () => {
   const [isRoomHost, setIsRoomHost] = useState(false)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
+  const frameMsAvg = useGameStore((state) => state.renderPerf.frameMsAvg)
+  const setQualityTier = useGameStore((state) => state.setQualityTier)
 
   const touchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -26,11 +29,17 @@ export const App = () => {
     return window.matchMedia('(pointer: coarse)').matches
   }, [])
   const lowPowerMode = batterySaverMode === 'on' || (batterySaverMode === 'auto' && touchDevice)
+  const qualityTier = deriveQualityTier({ batterySaverMode, touchDevice, frameMsAvg })
+  const qualityConfig = getQualityConfig(qualityTier)
   const paused = manualPaused || tabInactive || garageOpen
   const mapGravity = useMemo(
     () => getTrackMap(selectedMapId, proceduralMapSeed).gravity,
     [selectedMapId, proceduralMapSeed],
   )
+
+  useEffect(() => {
+    setQualityTier(qualityTier)
+  }, [qualityTier, setQualityTier])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -83,15 +92,15 @@ export const App = () => {
     <div className="app-shell">
       <Canvas
         frameloop={paused ? 'never' : 'always'}
-        shadows={lowPowerMode ? false : 'soft'}
-        dpr={lowPowerMode ? [0.8, 1.2] : [1, 1.8]}
-        gl={{ antialias: !lowPowerMode, powerPreference: lowPowerMode ? 'low-power' : 'high-performance' }}
+        shadows={qualityConfig.shadows}
+        dpr={qualityConfig.dpr}
+        gl={{ antialias: qualityConfig.antialias, powerPreference: qualityConfig.powerPreference, stencil: false }}
         camera={{ fov: 55, position: [0, 8, 16] }}
       >
         <color attach="background" args={['#8cd3f0']} />
         <fog attach="fog" args={['#8cd3f0', 25, 80]} />
         <Physics gravity={mapGravity}>
-          <GameScene lowPowerMode={lowPowerMode} roomId={roomId} isRoomHost={isRoomHost} />
+          <GameScene lowPowerMode={lowPowerMode} qualityTier={qualityTier} qualityConfig={qualityConfig} roomId={roomId} isRoomHost={isRoomHost} />
         </Physics>
       </Canvas>
       <Hud

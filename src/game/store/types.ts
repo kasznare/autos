@@ -3,6 +3,7 @@ import type { DriveInputState } from '../keys'
 import type { MapId } from '../maps'
 import type { PhysicsDebugTelemetryV2, SavedVehicleBuild, VehiclePhysicsTuning, VehicleSpec, VehicleSpecEvaluation } from '../types'
 import type { VEHICLE_PRESETS } from '../config'
+import type { QualityTier, RenderPerfTelemetry } from '../systems/performance'
 
 export type GameStatus = 'running' | 'lost'
 export type BatterySaverMode = 'auto' | 'on' | 'off'
@@ -65,19 +66,23 @@ export type InputSlice = {
 export type UiSlice = {
   speedKph: number
   steeringDeg: number
+  qualityTier: QualityTier
   engineMuted: boolean
   batterySaverMode: BatterySaverMode
   hitFxToken: number
   hitFxStrength: number
   lastHitLabel: string
   physicsTelemetry: PhysicsDebugTelemetryV2
+  renderPerf: RenderPerfTelemetry
   toggleEngineMuted: () => void
   setEngineMuted: (muted: boolean) => void
+  setQualityTier: (tier: QualityTier) => void
   setBatterySaverMode: (mode: BatterySaverMode) => void
   resetUiSetup: () => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
   setPhysicsTelemetry: (next: Partial<PhysicsDebugTelemetryV2>) => void
+  setRenderPerfTelemetry: (next: RenderPerfTelemetry) => void
 }
 
 export type GameState = GameplaySlice & MapSlice & VehicleSlice & InputSlice & UiSlice

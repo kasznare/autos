@@ -1,91 +1,115 @@
-# Three.js Optimization Strategies (Autos)
+# Three.js Optimization Strategies (Autos v2)
 
-This document is the shared optimization baseline for all teams.
+## Runtime Instrumentation (Implemented)
 
-## 1. Rendering Budget Targets
-- Target frame time:
-  - 60 FPS mode: <= 16.7ms total/frame
-  - 30 FPS fallback: <= 33.3ms total/frame
-- Keep a default GPU budget for mid-tier laptop iGPU.
-- Define quality presets as bundles, not individual random toggles.
+The runtime now publishes render profiling telemetry in the store and HUD:
 
-## 2. Biggest Wins First
-1. Reduce draw calls (instancing, merged static geometry).
-2. Reduce overdraw (alpha-heavy effects, fullscreen passes).
-3. Reduce expensive shadows/lights.
-4. Reduce fragment cost from complex materials.
-5. Reduce per-frame JS allocations in hot paths.
+- `fps`
+- `frameMsAvg`
+- `frameMsWorst`
+- `drawCalls`
+- `triangles`
+- `gpuHotspot` (`none` | `draw-calls` | `geometry` | `particles`)
+- `qualityTier` (`high` | `medium` | `low`)
 
-## 3. Geometry and Draw Calls
-- Use `InstancedMesh` for repeated props (trees, cones, rocks, lane markers).
-- Merge static meshes per zone/map chunk when interaction is not needed.
-- Split world into chunks; load/update only nearby chunks.
-- Use low-poly collision proxies separate from render meshes.
+Implementation modules:
 
-## 4. LOD and Distance Strategy
-- Use LOD tiers by distance for terrain detail, props, and traffic models.
-- Disable tiny far objects completely when below screen-size threshold.
-- Lower animation/update frequency for far entities (birds, traffic AI).
-- Use material simplification at distance (fewer features, cheaper shading).
+- `src/game/systems/performance.ts`
+- `src/game/scene/useRenderProfiler.ts`
+- `src/game/domains/immersion/storeSlice.ts`
+- `src/game/Hud.tsx`
 
-## 5. Materials, Textures, and Shading
-- Prefer a small set of reusable materials.
-- Keep shader variants low to avoid frequent program switches.
-- Use procedural textures where possible to reduce memory churn.
-- Avoid high-cost transparency; use dithered/alpha-tested alternatives when acceptable.
-- Limit normal/parallax complexity in fast-moving gameplay camera mode.
+## Quality Tiers (Implemented)
 
-## 6. Lighting and Shadows
-- Keep dynamic shadow-casting lights minimal.
-- Shadow quality tiers:
-  - Low: shadows off or single cheap shadow map
-  - Medium: one key light shadow with lower resolution
-  - High/Ultra: selective additional shadows
-- Restrict shadow distance and update rate.
-- Bake or fake indirect light where possible.
+Tiering is centralized in `src/game/systems/performance.ts`.
 
-## 7. Post-Processing Budget
-- Make post stack optional and tiered.
-- Avoid stacking multiple fullscreen passes on low/medium tiers.
-- Gate expensive effects (SSAO, SSR, heavy bloom) behind high/ultra tiers.
+### High
 
-## 8. Culling and Visibility
-- Enable frustum culling wherever valid.
-- Add coarse distance culling for map objects.
-- Use occlusion-friendly map layout/chunking where practical.
-- Do not render hidden debug helpers in production mode.
+- DPR: `[1, 1.8]`
+- Antialias: on
+- Shadows: soft (`1024x1024` directional map)
+- Environment/contact shadows: on
+- Terrain segments: `280`
+- Roadside density: `1.0`
+- Traffic update: `50 Hz`
+- Critter update: `45 Hz`
 
-## 9. React Three Fiber / App-Level Patterns
-- Keep `useFrame` handlers minimal and allocation-free.
-- Reuse vectors/quaternions/matrices; avoid per-frame object creation.
-- Use store selectors carefully to avoid broad rerenders.
-- Memoize static scene subtrees.
-- Prefer imperative updates for hot objects.
+### Medium
 
-## 10. Physics + Render Coordination
-- Keep collision meshes simple.
-- Decouple physics step quality from render quality presets.
-- Cap expensive collision checks with spatial partitioning.
-- Reduce update frequency for non-critical rigid bodies.
+- DPR: `[0.95, 1.35]`
+- Antialias: off
+- Shadows: off (`512x512` reserved config)
+- Environment/contact shadows: off
+- Terrain segments: `180`
+- Roadside density: `0.7`
+- Traffic update: `35 Hz`
+- Critter update: `25 Hz`
 
-## 11. Asset and Bundle Strategy
-- Lazy-load optional systems (high-end effects, debug tools).
-- Split chunks for garage/editor and gameplay where possible.
-- Keep startup path minimal.
+### Low
 
-## 12. Profiling Workflow
-- Always profile with same map, camera route, and spawn density.
-- Record:
-  - FPS average and 1% low
-  - frame-time spikes
-  - draw calls
-  - triangles
-  - GPU memory estimate (if available)
-- Capture before/after for every optimization PR.
+- DPR: `[0.75, 1.05]`
+- Antialias: off
+- Shadows: off (`256x256` reserved config)
+- Environment/contact shadows: off
+- Terrain segments: `120`
+- Roadside density: `0.45`
+- Traffic update: `25 Hz`
+- Critter update: `16 Hz`
 
-## 13. Team Integration Rules
-- Any team adding visual complexity must provide:
-  - expected perf impact
-  - fallback behavior for low tier
-  - knobs in shared quality settings
-- No team should merge high-cost visuals without a low-cost fallback.
+## Optimization Passes (Implemented)
+
+### 1) Draw-call reduction via instancing
+
+- `RoadsideDetails` moved from per-prop mesh render to two instanced batches (rocks + bushes).
+- `Trees` moved from per-tree render meshes to instanced trunk/canopy render batches, while keeping per-tree physics colliders.
+
+### 2) Tiered geometry budget
+
+- `RoadPath` and `ProceduralGround` now use tier-dependent terrain segment counts.
+
+### 3) Tiered simulation update budget
+
+- Traffic kinematic movement is now stepped at tier-specific rates instead of every render frame.
+- Critter motion updates are tier-stepped and distance-culled from player position.
+
+### 4) Physics/render sync micro-optimization
+
+- Critter hit checks in runtime switched from array includes to `Set` membership.
+
+## Before/After Perf Notes (Representative)
+
+These notes use deterministic scene-structure changes and runtime counters now shown in HUD.
+
+### Procedural path map
+
+- Roadside details draw calls:
+  - Before: up to ~180 draw calls (1 per detail mesh)
+  - After: 2 draw calls (instanced rocks + bushes)
+- Tree render draw calls:
+  - Before: ~2 per tree mesh group
+  - After: 3 draw calls total for all tree visuals (instanced trunk + 2 canopy variants)
+- Terrain tessellation:
+  - Before: fixed 280 segments
+  - After: 280 / 180 / 120 by quality tier
+
+### Ring maps
+
+- Roadside details draw calls:
+  - Before: up to ~70 draw calls
+  - After: 2 draw calls
+- Shadow/environment cost:
+  - Before: tied only to low-power mode
+  - After: explicitly controlled by quality tier policy
+
+## Remaining Bottlenecks
+
+- Vehicle meshes (player/traffic/remote) are still multi-mesh and non-instanced.
+- Fixed collider counts still dominate some CPU cost in dense maps.
+- Bundle chunk size warning still exists; gameplay vs garage code splitting is still pending.
+
+## Profiling Workflow
+
+1. Run same route on `orbital` and `procedural` maps for 30-60s.
+2. Capture HUD telemetry: FPS, avg/worst frame ms, draws, tris, hotspot, tier.
+3. Record low/medium/high tier behavior separately.
+4. Include these numbers in PR notes for every visual/system perf change.
