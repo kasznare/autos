@@ -7,6 +7,7 @@ import { CarModel } from '../CarModel'
 import { sampleTerrainHeight, type TrackMap } from '../maps'
 import type { CarSnapshot } from '../multiplayer'
 import { emitPhysicsEventV2, getMaterialResponseV2, normalizeCollisionMaterialV2 } from '../physics'
+import { useRenderSettings } from '../render/useRenderSettings'
 import { interpolateAngle, isPlayerOnTrafficPath, buildTrafficPath, getClosestProgressOnLoop, getLoopLength, sampleLoop, TRAFFIC_CAR_COUNT, type RuntimeCritter } from '../systems'
 import { PHYSICS_API_VERSION_V2 } from '../types'
 import type { DestructibleProp, Pickup, WorldObstacle } from '../types'
@@ -33,6 +34,7 @@ export const TrafficCars = ({
   restartToken: number
   playerPositionRef: { current: [number, number, number] }
 }) => {
+  const render = useRenderSettings()
   const path = useMemo(() => buildTrafficPath(map), [map])
   const loopLength = useMemo(() => getLoopLength(path), [path])
   const carRefs = useRef<Array<RapierRigidBody | null>>([])
@@ -90,7 +92,15 @@ export const TrafficCars = ({
             position={[sample.x, y, sample.z]}
             name={`medium-traffic-${idx}`}
           >
-            <CarModel bodyColor={color} accentColor="#f1f5ff" damage={0} lowPowerMode={lowPowerMode} showTrail={false} />
+            <CarModel
+              bodyColor={color}
+              accentColor="#f1f5ff"
+              damage={0}
+              lowPowerMode={lowPowerMode}
+              showTrail={false}
+              renderMode={render.mode}
+              wireframe={render.wireframe}
+            />
             <CuboidCollider args={[0.48, 0.26, 0.9]} position={[0, 0.26, 0]} />
           </RigidBody>
         )
@@ -118,6 +128,7 @@ export const BrokenDestructible = ({
   color: string
   burstSeed: number
 }) => {
+  const render = useRenderSettings()
   const chunkRefs = useRef<Array<RapierRigidBody | null>>([])
 
   useEffect(() => {
@@ -148,7 +159,7 @@ export const BrokenDestructible = ({
         >
           <mesh castShadow receiveShadow>
             <boxGeometry args={[0.24, 0.24, 0.24]} />
-            <meshStandardMaterial color={color} roughness={0.75} />
+            <meshStandardMaterial color={color} roughness={0.75} wireframe={render.wireframe} />
           </mesh>
           <CuboidCollider args={[0.12, 0.12, 0.12]} />
         </RigidBody>
@@ -166,6 +177,7 @@ export const ForestCritter = ({
   map: TrackMap
   onBreak: (id: string, position: [number, number, number]) => void
 }) => {
+  const render = useRenderSettings()
   const bodyRef = useRef<RapierRigidBody | null>(null)
 
   useFrame(({ clock }) => {
@@ -221,19 +233,19 @@ export const ForestCritter = ({
       <group>
         <mesh castShadow position={[0, 0.25, 0]}>
           <capsuleGeometry args={[0.23, 0.3, 4, 8]} />
-          <meshStandardMaterial color="#b8864e" roughness={0.85} />
+          <meshStandardMaterial color="#b8864e" roughness={0.85} wireframe={render.wireframe} />
         </mesh>
         <mesh castShadow position={[0, 0.57, 0.2]}>
           <sphereGeometry args={[0.18, 8, 8]} />
-          <meshStandardMaterial color="#d6b082" roughness={0.8} />
+          <meshStandardMaterial color="#d6b082" roughness={0.8} wireframe={render.wireframe} />
         </mesh>
         <mesh castShadow position={[-0.13, 0.58, 0.29]}>
           <sphereGeometry args={[0.06, 7, 7]} />
-          <meshStandardMaterial color="#35281e" roughness={0.9} />
+          <meshStandardMaterial color="#35281e" roughness={0.9} wireframe={render.wireframe} />
         </mesh>
         <mesh castShadow position={[0.13, 0.58, 0.29]}>
           <sphereGeometry args={[0.06, 7, 7]} />
-          <meshStandardMaterial color="#35281e" roughness={0.9} />
+          <meshStandardMaterial color="#35281e" roughness={0.9} wireframe={render.wireframe} />
         </mesh>
       </group>
       <CuboidCollider args={[0.23, 0.28, 0.28]} position={[0, 0.3, 0]} />
@@ -242,6 +254,7 @@ export const ForestCritter = ({
 }
 
 export const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const render = useRenderSettings()
   const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
   return (
     <RigidBody
@@ -253,7 +266,7 @@ export const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
     >
       <mesh position={obstacle.position} castShadow receiveShadow>
         <boxGeometry args={obstacle.size} />
-        <meshStandardMaterial color={obstacle.color} />
+        <meshStandardMaterial color={obstacle.color} wireframe={render.wireframe} />
       </mesh>
       <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
     </RigidBody>
@@ -261,6 +274,7 @@ export const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
 }
 
 export const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const render = useRenderSettings()
   const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
   return (
     <RigidBody
@@ -275,7 +289,7 @@ export const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
     >
       <mesh castShadow receiveShadow>
         <boxGeometry args={obstacle.size} />
-        <meshStandardMaterial color={obstacle.color} />
+        <meshStandardMaterial color={obstacle.color} wireframe={render.wireframe} />
       </mesh>
       <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
     </RigidBody>
@@ -290,56 +304,61 @@ export const IntactDestructible = ({
   destructible: DestructibleProp
   map: TrackMap
   onBreak: (id: string) => void
-}) => (
-  <RigidBody
-    colliders={false}
-    position={destructible.position}
-    mass={0.45}
-    friction={0.75}
-    restitution={0.08}
-    linearDamping={0.9}
-    angularDamping={0.85}
-    name={`medium-${destructible.id}`}
-    onCollisionEnter={(payload) => {
-      const otherName = payload.other.rigidBodyObject?.name ?? ''
-      if (!otherName.startsWith('player-car')) {
-        return
-      }
-      const otherBody = payload.other.rigidBody
-      const velocity = otherBody?.linvel?.()
-      const planarSpeed = velocity ? Math.hypot(velocity.x, velocity.z) : 0
-      const breakSpeedThreshold = Math.min(map.spawnRules.hazards.destructibles.breakSpeed, getMaterialResponseV2('wood').breakSpeedMps)
-      if (planarSpeed >= breakSpeedThreshold) {
-        emitPhysicsEventV2('impact', {
-          apiVersion: PHYSICS_API_VERSION_V2,
-          sourceId: destructible.id,
-          sourceMaterial: 'wood',
-          zone: 'front',
-          tier: planarSpeed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
-          energyJoules: planarSpeed * planarSpeed * 16,
-          impulse: planarSpeed * 0.7,
-          speedMps: planarSpeed,
-        })
-        onBreak(destructible.id)
-      }
-    }}
-  >
-    <mesh castShadow receiveShadow>
-      <boxGeometry args={[0.85, 0.85, 0.85]} />
-      <meshStandardMaterial color={destructible.color} roughness={0.78} />
-    </mesh>
-    <CuboidCollider args={[0.425, 0.425, 0.425]} />
-  </RigidBody>
-)
+}) => {
+  const render = useRenderSettings()
+  return (
+    <RigidBody
+      colliders={false}
+      position={destructible.position}
+      mass={0.45}
+      friction={0.75}
+      restitution={0.08}
+      linearDamping={0.9}
+      angularDamping={0.85}
+      name={`medium-${destructible.id}`}
+      onCollisionEnter={(payload) => {
+        const otherName = payload.other.rigidBodyObject?.name ?? ''
+        if (!otherName.startsWith('player-car')) {
+          return
+        }
+        const otherBody = payload.other.rigidBody
+        const velocity = otherBody?.linvel?.()
+        const planarSpeed = velocity ? Math.hypot(velocity.x, velocity.z) : 0
+        const breakSpeedThreshold = Math.min(map.spawnRules.hazards.destructibles.breakSpeed, getMaterialResponseV2('wood').breakSpeedMps)
+        if (planarSpeed >= breakSpeedThreshold) {
+          emitPhysicsEventV2('impact', {
+            apiVersion: PHYSICS_API_VERSION_V2,
+            sourceId: destructible.id,
+            sourceMaterial: 'wood',
+            zone: 'front',
+            tier: planarSpeed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
+            energyJoules: planarSpeed * planarSpeed * 16,
+            impulse: planarSpeed * 0.7,
+            speedMps: planarSpeed,
+          })
+          onBreak(destructible.id)
+        }
+      }}
+    >
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[0.85, 0.85, 0.85]} />
+        <meshStandardMaterial color={destructible.color} roughness={0.78} wireframe={render.wireframe} />
+      </mesh>
+      <CuboidCollider args={[0.425, 0.425, 0.425]} />
+    </RigidBody>
+  )
+}
 
 export const PickupItem = ({ pickup, lowPowerMode }: { pickup: Pickup; lowPowerMode: boolean }) => {
+  const render = useRenderSettings()
+  const sparkleDisabled = lowPowerMode || render.mode === 'flat-debug'
   if (pickup.type === 'star') {
     return (
       <group position={pickup.position}>
-        {lowPowerMode ? null : <Sparkles count={8} scale={1.1} size={4} speed={0.2} color="#fff7ac" />}
+        {sparkleDisabled ? null : <Sparkles count={8} scale={1.1} size={4} speed={0.2} color="#fff7ac" />}
         <mesh castShadow>
           <icosahedronGeometry args={[0.5, 0]} />
-          <meshStandardMaterial color="#ffd447" emissive="#b18212" emissiveIntensity={0.9} />
+          <meshStandardMaterial color="#ffd447" emissive="#b18212" emissiveIntensity={0.9} wireframe={render.wireframe} />
         </mesh>
       </group>
     )
@@ -348,10 +367,17 @@ export const PickupItem = ({ pickup, lowPowerMode }: { pickup: Pickup; lowPowerM
   if (pickup.type === 'part') {
     return (
       <group position={pickup.position}>
-        {lowPowerMode ? null : <Sparkles count={6} scale={1.2} size={4} speed={0.28} color="#b4d7ff" />}
+        {sparkleDisabled ? null : <Sparkles count={6} scale={1.2} size={4} speed={0.28} color="#b4d7ff" />}
         <mesh castShadow>
           <octahedronGeometry args={[0.52, 0]} />
-          <meshStandardMaterial color="#98acc7" metalness={0.58} roughness={0.34} emissive="#2c3f5f" emissiveIntensity={0.38} />
+          <meshStandardMaterial
+            color="#98acc7"
+            metalness={0.58}
+            roughness={0.34}
+            emissive="#2c3f5f"
+            emissiveIntensity={0.38}
+            wireframe={render.wireframe}
+          />
         </mesh>
       </group>
     )
@@ -359,16 +385,17 @@ export const PickupItem = ({ pickup, lowPowerMode }: { pickup: Pickup; lowPowerM
 
   return (
     <group position={pickup.position}>
-      {lowPowerMode ? null : <Sparkles count={6} scale={1.1} size={4} speed={0.3} color="#9fffbf" />}
+      {sparkleDisabled ? null : <Sparkles count={6} scale={1.1} size={4} speed={0.3} color="#9fffbf" />}
       <mesh castShadow>
         <boxGeometry args={[0.8, 0.8, 0.8]} />
-        <meshStandardMaterial color="#58d47e" emissive="#1d5a32" emissiveIntensity={0.6} />
+        <meshStandardMaterial color="#58d47e" emissive="#1d5a32" emissiveIntensity={0.6} wireframe={render.wireframe} />
       </mesh>
     </group>
   )
 }
 
 export const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPowerMode: boolean }) => {
+  const render = useRenderSettings()
   const groupRef = useRef<Group>(null)
   const yawRef = useRef(car.yaw)
   useFrame(() => {
@@ -407,8 +434,15 @@ export const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPower
 
   return (
     <group ref={groupRef} position={[car.x, car.y, car.z]} rotation={[0, car.yaw, 0]}>
-      <CarModel bodyColor={car.color} accentColor="#d9e6ff" damage={0} lowPowerMode={lowPowerMode} showTrail={false} />
+      <CarModel
+        bodyColor={car.color}
+        accentColor="#d9e6ff"
+        damage={0}
+        lowPowerMode={lowPowerMode}
+        showTrail={false}
+        renderMode={render.mode}
+        wireframe={render.wireframe}
+      />
     </group>
   )
 }
-

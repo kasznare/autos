@@ -6,6 +6,8 @@ import type { VEHICLE_PRESETS } from '../config'
 
 export type GameStatus = 'running' | 'lost'
 export type BatterySaverMode = 'auto' | 'on' | 'off'
+export type RenderMode = 'flat-debug' | 'pretty'
+export type RenderQualityTier = 'low' | 'medium' | 'high' | 'ultra'
 export type MissionType = 'collect_stars' | 'collect_parts' | 'pass_gates' | 'clean_drive'
 
 export type ActiveMission = {
@@ -67,6 +69,9 @@ export type UiSlice = {
   steeringDeg: number
   engineMuted: boolean
   batterySaverMode: BatterySaverMode
+  renderMode: RenderMode
+  renderQualityTier: RenderQualityTier
+  renderWireframe: boolean
   hitFxToken: number
   hitFxStrength: number
   lastHitLabel: string
@@ -74,6 +79,9 @@ export type UiSlice = {
   toggleEngineMuted: () => void
   setEngineMuted: (muted: boolean) => void
   setBatterySaverMode: (mode: BatterySaverMode) => void
+  setRenderMode: (mode: RenderMode) => void
+  setRenderQualityTier: (tier: RenderQualityTier) => void
+  setRenderWireframe: (enabled: boolean) => void
   resetUiSetup: () => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
