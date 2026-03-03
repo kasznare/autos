@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
 import type { CarProfileId } from './config'
+import type { SpeedBand, SurfaceType } from './immersionEvents'
 import { createInputState } from './keys'
 import type { MapId } from './maps'
 import type { DriveInputState } from './keys'
@@ -43,6 +44,12 @@ type GameState = {
   bestScore: number
   speedKph: number
   steeringDeg: number
+  surface: SurfaceType
+  tractionPct: number
+  speedBand: SpeedBand
+  lastImpactKph: number
+  frameMsAvg: number
+  frameMsWorst: number
   status: GameStatus
   restartToken: number
   engineMuted: boolean
@@ -70,6 +77,9 @@ type GameState = {
   setGamepadConnected: (connected: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
+  setDriveFeedback: (surface: SurfaceType, tractionPct: number, speedBand: SpeedBand) => void
+  setLastImpactKph: (kph: number) => void
+  setFrameTiming: (avgMs: number, worstMs: number) => void
   advanceMission: (event: MissionType, amount?: number) => void
   setMissionProgress: (event: MissionType, progress: number) => void
   restartRun: () => void
@@ -81,6 +91,12 @@ export const useGameStore = create<GameState>((set) => ({
   bestScore: 0,
   speedKph: 0,
   steeringDeg: 0,
+  surface: 'road',
+  tractionPct: 100,
+  speedBand: 'crawl',
+  lastImpactKph: 0,
+  frameMsAvg: 0,
+  frameMsWorst: 0,
   status: 'running',
   restartToken: 0,
   engineMuted: true,
@@ -153,6 +169,12 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      surface: 'road',
+      tractionPct: 100,
+      speedBand: 'crawl',
+      lastImpactKph: 0,
+      frameMsAvg: 0,
+      frameMsWorst: 0,
       mission: buildMission(0),
       proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
     })),
@@ -167,6 +189,12 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      surface: 'road',
+      tractionPct: 100,
+      speedBand: 'crawl',
+      lastImpactKph: 0,
+      frameMsAvg: 0,
+      frameMsWorst: 0,
       mission: buildMission(0),
     })),
   setSelectedCarColor: (color) =>
@@ -201,6 +229,24 @@ export const useGameStore = create<GameState>((set) => ({
       ...state,
       speedKph,
       steeringDeg,
+    })),
+  setDriveFeedback: (surface, tractionPct, speedBand) =>
+    set((state) => ({
+      ...state,
+      surface,
+      tractionPct: Math.max(0, Math.min(100, tractionPct)),
+      speedBand,
+    })),
+  setLastImpactKph: (kph) =>
+    set((state) => ({
+      ...state,
+      lastImpactKph: Math.max(0, kph),
+    })),
+  setFrameTiming: (avgMs, worstMs) =>
+    set((state) => ({
+      ...state,
+      frameMsAvg: Math.max(0, avgMs),
+      frameMsWorst: Math.max(0, worstMs),
     })),
   advanceMission: (event, amount = 1) =>
     set((state) => {
@@ -265,6 +311,12 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      surface: 'road',
+      tractionPct: 100,
+      speedBand: 'crawl',
+      lastImpactKph: 0,
+      frameMsAvg: 0,
+      frameMsWorst: 0,
       mission: buildMission(0),
     })),
 }))

@@ -36,6 +36,15 @@ export type TrackMap = {
   trees: TrackTree[]
 }
 
+export type MapVisualTheme = {
+  sky: string
+  fog: string
+  fogNear: number
+  fogFar: number
+  groundShadow: string
+  envPreset: 'sunset' | 'park' | 'dawn' | 'forest'
+}
+
 export const MAP_ORDER: MapId[] = ['classic', 'city', 'meadow', 'procedural']
 
 export const MAP_LABELS: Record<MapId, string> = {
@@ -43,6 +52,41 @@ export const MAP_LABELS: Record<MapId, string> = {
   city: 'City',
   meadow: 'Meadow',
   procedural: 'Forest Loop',
+}
+
+const MAP_VISUALS: Record<MapId, MapVisualTheme> = {
+  classic: {
+    sky: '#89c9ec',
+    fog: '#89c9ec',
+    fogNear: 24,
+    fogFar: 84,
+    groundShadow: '#2b4f42',
+    envPreset: 'sunset',
+  },
+  city: {
+    sky: '#87c2dd',
+    fog: '#7ab0cf',
+    fogNear: 22,
+    fogFar: 72,
+    groundShadow: '#3a4857',
+    envPreset: 'dawn',
+  },
+  meadow: {
+    sky: '#90d9b8',
+    fog: '#98dfbf',
+    fogNear: 24,
+    fogFar: 80,
+    groundShadow: '#2f5f45',
+    envPreset: 'park',
+  },
+  procedural: {
+    sky: '#91c3a1',
+    fog: '#7bb08b',
+    fogNear: 26,
+    fogFar: 86,
+    groundShadow: '#264736',
+    envPreset: 'forest',
+  },
 }
 
 const isRoadRingAt = (x: number, z: number, outerHalf: number, innerHalf: number) =>
@@ -357,3 +401,5 @@ export const getTrackMap = (selectedMapId: MapId, proceduralSeed: number): Track
   }
   return fixedMaps[selectedMapId]
 }
+
+export const getMapVisualTheme = (map: TrackMap): MapVisualTheme => MAP_VISUALS[map.sourceId]

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
 import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
+import { emitImmersionEvent, speedBandFromKph, type SpeedBand } from './immersionEvents'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput, resetGamepadInput, setGamepadInput } from './keys'
 import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
@@ -98,6 +99,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const leftDoorRef = useRef<Group>(null)
   const rightDoorRef = useRef<Group>(null)
   const activeGamepadIndexRef = useRef<number | null>(null)
+  const feedbackTimerRef = useRef(0)
+  const lastSurfaceRef = useRef<'road' | 'grass'>('road')
+  const lastSpeedBandRef = useRef<SpeedBand>('crawl')
+  const vehicleDisabledEmittedRef = useRef(false)
   const smoothedPosRef = useRef(new Vector3(DEFAULT_START_POSITION.x, DEFAULT_START_POSITION.y, DEFAULT_START_POSITION.z))
   const smoothedForwardRef = useRef(new Vector3(0, 0, 1))
   const smoothedTargetRef = useRef(new Vector3(0, 0, 0))
@@ -118,6 +123,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const triggerHitFx = useGameStore((state) => state.triggerHitFx)
   const restartRun = useGameStore((state) => state.restartRun)
   const setTelemetry = useGameStore((state) => state.setTelemetry)
+  const setDriveFeedback = useGameStore((state) => state.setDriveFeedback)
+  const setLastImpactKph = useGameStore((state) => state.setLastImpactKph)
   const setGamepadConnected = useGameStore((state) => state.setGamepadConnected)
 
   const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
@@ -152,11 +159,16 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     hardContactCountRef.current = 0
     scrapeDamageTimerRef.current = 0
     armorTimerRef.current = 0
+    feedbackTimerRef.current = 0
+    lastSurfaceRef.current = 'road'
+    lastSpeedBandRef.current = 'crawl'
+    vehicleDisabledEmittedRef.current = false
     setTelemetry(0, 0)
+    setDriveFeedback('road', 100, 'crawl')
     smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
-  }, [restartToken, setTelemetry, startPosition, startYaw])
+  }, [restartToken, setDriveFeedback, setTelemetry, startPosition, startYaw])
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -238,6 +250,13 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       stopEngineSound()
     }
   }, [])
+
+  useEffect(() => {
+    if (status === 'lost' && !vehicleDisabledEmittedRef.current) {
+      vehicleDisabledEmittedRef.current = true
+      emitImmersionEvent('vehicle_disabled', { totalDamage: damage })
+    }
+  }, [damage, status])
 
   useFrame((state, delta) => {
     const body = bodyRef.current
@@ -423,7 +442,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       },
       true,
     )
-    setTelemetry(Math.abs(nextForwardSpeed) * 3.6, (steerAngleRef.current * 180) / Math.PI)
+    const speedKph = Math.abs(nextForwardSpeed) * 3.6
+    setTelemetry(speedKph, (steerAngleRef.current * 180) / Math.PI)
 
     onPlayerPosition([pos.x, pos.y, pos.z])
 
@@ -456,6 +476,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         if (scrapeDamage > 0) {
           addDamage(scrapeDamage)
           triggerHitFx(0.2, getImpactLabel('hard', scrapeDamage, true))
+          emitImmersionEvent('damage_applied', {
+            amount: scrapeDamage,
+            totalDamage: Math.min(MAX_DAMAGE, damage + scrapeDamage),
+            source: 'scrape',
+          })
         }
       }
     } else {
@@ -464,14 +489,38 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
 
     const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
     const lateralLoad = Math.min(1, Math.abs(nextLateralSpeed) / 2.4)
+    const slip = Math.min(1, Math.abs(nextLateralSpeed) / Math.max(1.2, Math.abs(nextForwardSpeed) * 0.55 + 0.7))
+    const traction = 1 - slip
+    const currentSurface = onRoad ? 'road' : 'grass'
+    const speedBand = speedBandFromKph(speedKph)
+    feedbackTimerRef.current += delta
+    const surfaceChanged = currentSurface !== lastSurfaceRef.current
+    const speedBandChanged = speedBand !== lastSpeedBandRef.current
+    if (feedbackTimerRef.current >= 0.16 || surfaceChanged || speedBandChanged) {
+      feedbackTimerRef.current = 0
+      setDriveFeedback(currentSurface, traction * 100, speedBand)
+      emitImmersionEvent('terrain_feedback', {
+        surface: currentSurface,
+        traction,
+        slip,
+        speedKph,
+      })
+      if (speedBandChanged) {
+        emitImmersionEvent('speed_feedback', { speedKph, band: speedBand })
+      }
+      lastSurfaceRef.current = currentSurface
+      lastSpeedBandRef.current = speedBand
+    }
     const engineLoad = Math.min(1, damageRatio * 0.55 + lateralLoad * 0.35 + (onRoad ? 0 : 0.2))
     updateEngineSound({
       speed: Math.abs(nextForwardSpeed),
       throttle: Math.abs(throttle),
       direction: engineDirection,
-      surface: onRoad ? 'road' : 'grass',
+      surface: currentSurface,
       engineLoad,
       tone: profile.engineTone,
+      slip,
+      traction,
     })
 
     const camPosSmoothing = 1 - Math.exp(-delta * 9)
@@ -635,6 +684,19 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
           ),
         )
         addDamage(scaledDamage)
+        setLastImpactKph(planarSpeed * 3.6)
+        emitImmersionEvent('impact', {
+          speedMps: planarSpeed,
+          material,
+          hard: material === 'hard',
+          damageDelta: scaledDamage,
+          position: [body.translation().x, body.translation().y, body.translation().z],
+        })
+        emitImmersionEvent('damage_applied', {
+          amount: scaledDamage,
+          totalDamage: Math.min(MAX_DAMAGE, damage + scaledDamage),
+          source: 'impact',
+        })
         playCollisionSound(material === 'hard', planarSpeed)
         const hitStrength = Math.min(
           1,

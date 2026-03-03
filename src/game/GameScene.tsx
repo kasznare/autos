@@ -4,8 +4,10 @@ import { CuboidCollider, RapierRigidBody, RigidBody, TrimeshCollider } from '@re
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, Group, PlaneGeometry, RepeatWrapping } from 'three'
 import { CarModel } from './CarModel'
+import { CAR_PROFILES } from './config'
 import { TRACK_SIZE } from './config'
-import { getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
+import { emitImmersionEvent } from './immersionEvents'
+import { getMapVisualTheme, getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
 import { createRoomChannel, isMultiplayerConfigured, makeClientId, type CarSnapshot, type RoomChannelHandle } from './multiplayer'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
@@ -1093,7 +1095,9 @@ export const GameScene = ({
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const advanceMission = useGameStore((state) => state.advanceMission)
   const setMissionProgress = useGameStore((state) => state.setMissionProgress)
+  const setFrameTiming = useGameStore((state) => state.setFrameTiming)
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
+  const mapTheme = useMemo(() => getMapVisualTheme(map), [map])
   const activeStaticObstacles = useMemo(
     () => (map.sourceId === 'procedural' ? [] : STATIC_OBSTACLES),
     [map.sourceId],
@@ -1133,12 +1137,15 @@ export const GameScene = ({
   const prevDamageRef = useRef(damage)
   const cleanDriveSecondsRef = useRef(0)
   const missionTickTimerRef = useRef(0)
+  const frameStatsWindowRef = useRef<number[]>([])
+  const frameStatsTimerRef = useRef(0)
   const headingRef = useRef(map.startYaw)
   const lastHeadingPosRef = useRef<[number, number, number]>(map.startPosition)
   const multiplayerEnabled = Boolean(roomId && isMultiplayerConfigured())
   const guestMode = multiplayerEnabled && !isRoomHost
 
   const breakCritter = useCallback((id: string, position: [number, number, number]) => {
+    emitImmersionEvent('destructible_event', { id, state: 'broken', by: 'player', position })
     setCritters((state) =>
       state.map((item) =>
         item.id === id && item.state === 'alive'
@@ -1188,18 +1195,25 @@ export const GameScene = ({
   }, [])
 
   const applyBreakDestructible = useCallback((id: string, burstSeed?: number) => {
+    let breakPosition: [number, number, number] | null = null
     setDestructibles((state) =>
       state.map((item) =>
         item.id === id && item.phase === 'intact'
-          ? {
-              ...item,
-              phase: 'broken',
-              respawnAt: performance.now() / 1000 + DESTRUCTIBLE_RESPAWN_SECONDS,
-              burstSeed: burstSeed ?? destructibleSeedRef.current++,
-            }
+          ? (() => {
+              breakPosition = item.position
+              return {
+                ...item,
+                phase: 'broken',
+                respawnAt: performance.now() / 1000 + DESTRUCTIBLE_RESPAWN_SECONDS,
+                burstSeed: burstSeed ?? destructibleSeedRef.current++,
+              }
+            })()
           : item,
       ),
     )
+    if (breakPosition) {
+      emitImmersionEvent('destructible_event', { id, state: 'broken', by: 'player', position: breakPosition })
+    }
   }, [])
 
   const breakDestructible = useCallback(
@@ -1216,6 +1230,23 @@ export const GameScene = ({
   useEffect(() => {
     pickupsRef.current = pickups
   }, [pickups])
+
+  useEffect(() => {
+    emitImmersionEvent('map_loaded', {
+      mapId: map.id,
+      sourceId: map.sourceId,
+      shape: map.shape,
+      terrainAmplitude: map.terrainAmplitude,
+    })
+  }, [map.id, map.shape, map.sourceId, map.terrainAmplitude])
+
+  useEffect(() => {
+    emitImmersionEvent('build_profile_changed', {
+      profile: selectedCarProfile,
+      color: selectedCarColor,
+      engineTone: CAR_PROFILES[selectedCarProfile].engineTone,
+    })
+  }, [selectedCarColor, selectedCarProfile])
 
   useEffect(() => {
     if (!roomId || !isMultiplayerConfigured()) {
@@ -1269,6 +1300,22 @@ export const GameScene = ({
   }, [applyBreakDestructible, applyPickupCollect, guestMode, roomId])
 
   useFrame((_, delta) => {
+    const frameMs = delta * 1000
+    frameStatsWindowRef.current.push(frameMs)
+    if (frameStatsWindowRef.current.length > 90) {
+      frameStatsWindowRef.current.shift()
+    }
+    frameStatsTimerRef.current += delta
+    if (frameStatsTimerRef.current >= 0.45) {
+      frameStatsTimerRef.current = 0
+      const values = frameStatsWindowRef.current
+      if (values.length > 0) {
+        const avg = values.reduce((acc, value) => acc + value, 0) / values.length
+        const worst = values.reduce((acc, value) => Math.max(acc, value), 0)
+        setFrameTiming(avg, worst)
+      }
+    }
+
     const critterResetKey = `${map.id}-${proceduralMapSeed}-${restartToken}`
     if (critterResetKeyRef.current !== critterResetKey) {
       critterResetKeyRef.current = critterResetKey
@@ -1285,6 +1332,8 @@ export const GameScene = ({
       critterRespawnTimerRef.current = 0
       critterHitCheckTimerRef.current = 0
       missionTickTimerRef.current = 0
+      frameStatsTimerRef.current = 0
+      frameStatsWindowRef.current = []
       cleanDriveSecondsRef.current = 0
       prevDamageRef.current = 0
       gateInsideRef.current = Array.from({ length: map.gates.length }, () => false)
@@ -1531,6 +1580,12 @@ export const GameScene = ({
             position: [point[0], 0.7, point[2]] as [number, number, number],
             color: DESTRUCTIBLE_COLORS[(destructibleSeedRef.current + pointIndex + 1) % DESTRUCTIBLE_COLORS.length],
           }
+          emitImmersionEvent('destructible_event', {
+            id: item.id,
+            state: 'respawned',
+            by: 'system',
+            position: respawned.position,
+          })
           return respawned
         }
         return item
@@ -1560,8 +1615,8 @@ export const GameScene = ({
         shadow-camera-top={36}
         shadow-camera-bottom={-36}
       />
-      {!lowPowerMode ? <Environment preset="sunset" /> : null}
-      {!lowPowerMode ? <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={512} color="#2a4f3b" /> : null}
+      {!lowPowerMode ? <Environment preset={mapTheme.envPreset} /> : null}
+      {!lowPowerMode ? <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={512} color={mapTheme.groundShadow} /> : null}
       {map.shape === 'ring' ? (
         <>
           <Ground worldHalf={map.worldHalf} />

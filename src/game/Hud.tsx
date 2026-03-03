@@ -60,6 +60,12 @@ export const Hud = ({
   const bestScore = useGameStore((state) => state.bestScore)
   const speedKph = useGameStore((state) => state.speedKph)
   const steeringDeg = useGameStore((state) => state.steeringDeg)
+  const surface = useGameStore((state) => state.surface)
+  const tractionPct = useGameStore((state) => state.tractionPct)
+  const speedBand = useGameStore((state) => state.speedBand)
+  const lastImpactKph = useGameStore((state) => state.lastImpactKph)
+  const frameMsAvg = useGameStore((state) => state.frameMsAvg)
+  const frameMsWorst = useGameStore((state) => state.frameMsWorst)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
@@ -116,6 +122,16 @@ export const Hud = ({
         <div className="hud-telemetry-row">
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
           <div className="hud-card hud-card-compact">Steer: {steeringDeg >= 0 ? '+' : ''}{Math.round(steeringDeg)}°</div>
+        </div>
+        <div className="hud-feedback-row">
+          <div className={`telemetry-chip telemetry-chip-${surface}`}>Surface: {surface === 'road' ? 'Road' : 'Grass'}</div>
+          <div className={`telemetry-chip${tractionPct < 65 ? ' telemetry-chip-warning' : ''}`}>Grip: {Math.round(tractionPct)}%</div>
+          <div className={`telemetry-chip telemetry-chip-speed-${speedBand}`}>Band: {speedBand}</div>
+        </div>
+        <div className="hud-feedback-row">
+          <div className={`telemetry-chip${lastImpactKph >= 35 ? ' telemetry-chip-warning' : ''}`}>Impact: {Math.round(lastImpactKph)} km/h</div>
+          <div className={`telemetry-chip${frameMsWorst > 20 ? ' telemetry-chip-warning' : ''}`}>Frame: {frameMsAvg > 0 ? frameMsAvg.toFixed(1) : '0.0'} ms</div>
+          <div className="telemetry-chip">Worst: {frameMsWorst > 0 ? frameMsWorst.toFixed(1) : '0.0'} ms</div>
         </div>
         <div className="mission-card">
           <div className="mission-title">
