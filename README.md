@@ -30,3 +30,6 @@ npm run lint
 
 ## Roadmap
 See [docs/ROADMAP.md](./docs/ROADMAP.md).
+
+## Rendering
+See [docs/rendering-modes.md](./docs/rendering-modes.md) for render mode and quality-tier architecture.

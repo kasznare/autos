@@ -9,6 +9,9 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
   steeringDeg: 0,
   engineMuted: initialUiSetup.engineMuted,
   batterySaverMode: initialUiSetup.batterySaverMode,
+  renderMode: initialUiSetup.renderMode,
+  renderQualityTier: initialUiSetup.renderQualityTier,
+  renderWireframe: initialUiSetup.renderWireframe,
   hitFxToken: 0,
   hitFxStrength: 0,
   lastHitLabel: '',
@@ -16,7 +19,13 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
   toggleEngineMuted: () =>
     set((state) => {
       const nextEngineMuted = !state.engineMuted
-      persistUiSetup({ batterySaverMode: state.batterySaverMode, engineMuted: nextEngineMuted })
+      persistUiSetup({
+        batterySaverMode: state.batterySaverMode,
+        engineMuted: nextEngineMuted,
+        renderMode: state.renderMode,
+        renderQualityTier: state.renderQualityTier,
+        renderWireframe: state.renderWireframe,
+      })
       return {
         ...state,
         engineMuted: nextEngineMuted,
@@ -24,7 +33,13 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
     }),
   setEngineMuted: (muted) =>
     set((state) => {
-      persistUiSetup({ batterySaverMode: state.batterySaverMode, engineMuted: muted })
+      persistUiSetup({
+        batterySaverMode: state.batterySaverMode,
+        engineMuted: muted,
+        renderMode: state.renderMode,
+        renderQualityTier: state.renderQualityTier,
+        renderWireframe: state.renderWireframe,
+      })
       return {
         ...state,
         engineMuted: muted,
@@ -32,10 +47,62 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
     }),
   setBatterySaverMode: (mode) =>
     set((state) => {
-      persistUiSetup({ batterySaverMode: mode, engineMuted: state.engineMuted })
+      persistUiSetup({
+        batterySaverMode: mode,
+        engineMuted: state.engineMuted,
+        renderMode: state.renderMode,
+        renderQualityTier: state.renderQualityTier,
+        renderWireframe: state.renderWireframe,
+      })
       return {
         ...state,
         batterySaverMode: mode,
+      }
+    }),
+  setRenderMode: (mode) =>
+    set((state) => {
+      const nextWireframe = mode === 'flat-debug' ? state.renderWireframe : false
+      const nextBatterySaverMode = mode === 'flat-debug' ? 'on' : state.batterySaverMode
+      persistUiSetup({
+        batterySaverMode: nextBatterySaverMode,
+        engineMuted: state.engineMuted,
+        renderMode: mode,
+        renderQualityTier: state.renderQualityTier,
+        renderWireframe: nextWireframe,
+      })
+      return {
+        ...state,
+        batterySaverMode: nextBatterySaverMode,
+        renderMode: mode,
+        renderWireframe: nextWireframe,
+      }
+    }),
+  setRenderQualityTier: (tier) =>
+    set((state) => {
+      persistUiSetup({
+        batterySaverMode: state.batterySaverMode,
+        engineMuted: state.engineMuted,
+        renderMode: state.renderMode,
+        renderQualityTier: tier,
+        renderWireframe: state.renderWireframe,
+      })
+      return {
+        ...state,
+        renderQualityTier: tier,
+      }
+    }),
+  setRenderWireframe: (enabled) =>
+    set((state) => {
+      persistUiSetup({
+        batterySaverMode: state.batterySaverMode,
+        engineMuted: state.engineMuted,
+        renderMode: state.renderMode,
+        renderQualityTier: state.renderQualityTier,
+        renderWireframe: enabled,
+      })
+      return {
+        ...state,
+        renderWireframe: enabled,
       }
     }),
   resetUiSetup: () =>
@@ -45,6 +112,9 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
         ...state,
         batterySaverMode: DEFAULT_UI_SETUP.batterySaverMode,
         engineMuted: DEFAULT_UI_SETUP.engineMuted,
+        renderMode: DEFAULT_UI_SETUP.renderMode,
+        renderQualityTier: DEFAULT_UI_SETUP.renderQualityTier,
+        renderWireframe: DEFAULT_UI_SETUP.renderWireframe,
       }
     }),
   triggerHitFx: (strength, label = '') =>

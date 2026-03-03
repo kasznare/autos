@@ -1,6 +1,8 @@
 import { Trail } from '@react-three/drei'
 import type { RefObject } from 'react'
+import { BackSide } from 'three'
 import type { Group } from 'three'
+import type { RenderMode } from './store/types'
 
 type CarModelProps = {
   bodyColor: string
@@ -9,6 +11,8 @@ type CarModelProps = {
   lowPowerMode?: boolean
   showTrail?: boolean
   crackOpacity?: number
+  renderMode?: RenderMode
+  wireframe?: boolean
   bumperRef?: RefObject<Group | null>
   loosePanelRef?: RefObject<Group | null>
   hoodRef?: RefObject<Group | null>
@@ -24,6 +28,8 @@ export const CarModel = ({
   lowPowerMode = false,
   showTrail = true,
   crackOpacity,
+  renderMode = 'pretty',
+  wireframe = false,
   bumperRef,
   loosePanelRef,
   hoodRef,
@@ -36,6 +42,78 @@ export const CarModel = ({
   const rightDoorFellOff = damage >= 86
   const frontBumperFellOff = damage >= 92
   const glassCrackOpacity = crackOpacity ?? Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
+  const flatDebug = renderMode === 'flat-debug'
+
+  if (flatDebug) {
+    return (
+      <group>
+        <group position={[0, 0.38, 0]}>
+          <mesh castShadow={!lowPowerMode}>
+            <boxGeometry args={[1.45, 0.62, 2.5]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.95} metalness={0} wireframe={wireframe} />
+          </mesh>
+          <mesh scale={[1.06, 1.06, 1.06]}>
+            <boxGeometry args={[1.45, 0.62, 2.5]} />
+            <meshBasicMaterial color="#11151c" side={BackSide} />
+          </mesh>
+        </group>
+        <group ref={roofRef} position={[0, 0.86, -0.02]}>
+          <mesh castShadow={!lowPowerMode}>
+            <boxGeometry args={[0.94, 0.34, 1.16]} />
+            <meshStandardMaterial color={accentColor} roughness={0.92} metalness={0} wireframe={wireframe} />
+          </mesh>
+          <mesh scale={[1.08, 1.08, 1.08]}>
+            <boxGeometry args={[0.94, 0.34, 1.16]} />
+            <meshBasicMaterial color="#11151c" side={BackSide} />
+          </mesh>
+        </group>
+        <group ref={hoodRef} position={[0, 0.54, 0.9]}>
+          <mesh castShadow={!lowPowerMode}>
+            <boxGeometry args={[1.1, 0.18, 0.86]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.95} metalness={0} wireframe={wireframe} />
+          </mesh>
+        </group>
+        <group ref={leftDoorRef} position={[-0.76, 0.42, 0]}>
+          <mesh castShadow={!lowPowerMode}>
+            <boxGeometry args={[0.1, 0.42, 1.16]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.95} metalness={0} wireframe={wireframe} />
+          </mesh>
+        </group>
+        {rightDoorFellOff ? null : (
+          <group ref={rightDoorRef} position={[0.76, 0.42, 0]}>
+            <mesh castShadow={!lowPowerMode}>
+              <boxGeometry args={[0.1, 0.42, 1.16]} />
+              <meshStandardMaterial color={bodyColor} roughness={0.95} metalness={0} wireframe={wireframe} />
+            </mesh>
+          </group>
+        )}
+        {frontBumperFellOff ? null : (
+          <group ref={bumperRef} position={[0, 0.03, 1.2]}>
+            <mesh castShadow={!lowPowerMode}>
+              <boxGeometry args={[1.35, 0.2, 0.24]} />
+              <meshStandardMaterial color={accentColor} roughness={0.95} metalness={0} wireframe={wireframe} />
+            </mesh>
+          </group>
+        )}
+        <group ref={loosePanelRef} position={[0.82, 0.26, 0.18]} visible={false}>
+          <mesh castShadow={!lowPowerMode}>
+            <boxGeometry args={[0.12, 0.46, 0.72]} />
+            <meshStandardMaterial color="#323840" roughness={1} metalness={0} wireframe={wireframe} />
+          </mesh>
+        </group>
+        {[[-0.6, -0.08, -0.8], [0.6, -0.08, -0.8], [-0.6, -0.08, 0.8], [0.6, -0.08, 0.8]].map(([x, y, z]) => (
+          <mesh key={`${x}-${z}`} castShadow={!lowPowerMode} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#20242d" roughness={0.95} metalness={0} wireframe={wireframe} />
+          </mesh>
+        ))}
+        <mesh position={[0, 0.92, 0.45]}>
+          <planeGeometry args={[0.72, 0.18]} />
+          <meshStandardMaterial color="#304151" transparent opacity={Math.min(0.65, 0.25 + glassCrackOpacity)} />
+        </mesh>
+      </group>
+    )
+  }
 
   const shell = (
     <group>
