@@ -33,12 +33,14 @@ export const GameScene = ({
   lowPowerMode = false,
   qualityTier = 'high',
   qualityConfig,
+  runtimeActive = true,
   roomId = null,
   isRoomHost = false,
 }: {
   lowPowerMode?: boolean
   qualityTier?: QualityTier
   qualityConfig: QualityConfig
+  runtimeActive?: boolean
   roomId?: string | null
   isRoomHost?: boolean
 }) => {
@@ -98,6 +100,7 @@ export const GameScene = ({
     breakCritter,
   } = useGameSceneRuntime({
     map,
+    runtimeActive,
     roomId,
     isRoomHost,
     initialPickups,

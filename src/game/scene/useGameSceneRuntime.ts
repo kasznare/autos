@@ -8,6 +8,7 @@ import type { RemoteCarState, RuntimeDestructible } from './entities'
 
 type UseGameSceneRuntimeParams = {
   map: TrackMap
+  runtimeActive: boolean
   roomId: string | null
   isRoomHost: boolean
   initialPickups: Pickup[]
@@ -25,6 +26,7 @@ type UseGameSceneRuntimeParams = {
 
 export const useGameSceneRuntime = ({
   map,
+  runtimeActive,
   roomId,
   isRoomHost,
   initialPickups,
@@ -67,7 +69,7 @@ export const useGameSceneRuntime = ({
   const headingRef = useRef(map.startYaw)
   const lastHeadingPosRef = useRef<[number, number, number]>(map.startPosition)
 
-  const multiplayerEnabled = Boolean(roomId && isMultiplayerConfigured())
+  const multiplayerEnabled = Boolean(runtimeActive && roomId && isMultiplayerConfigured())
   const guestMode = multiplayerEnabled && !isRoomHost
 
   const breakCritter = useCallback((id: string, position: [number, number, number]) => {
@@ -150,7 +152,7 @@ export const useGameSceneRuntime = ({
   }, [pickups])
 
   useEffect(() => {
-    if (!roomId || !isMultiplayerConfigured()) {
+    if (!runtimeActive || !roomId || !isMultiplayerConfigured()) {
       channelRef.current?.destroy()
       channelRef.current = null
       queueMicrotask(() => setRemoteCars({}))
@@ -198,7 +200,7 @@ export const useGameSceneRuntime = ({
         channelRef.current = null
       }
     }
-  }, [applyBreakDestructible, applyPickupCollect, guestMode, roomId])
+  }, [applyBreakDestructible, applyPickupCollect, guestMode, roomId, runtimeActive])
 
   useFrame((_, delta) => {
     const critterResetKey = `${map.id}-${proceduralMapSeed}-${restartToken}`

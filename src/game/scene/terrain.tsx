@@ -1,12 +1,24 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { BackSide, CanvasTexture, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, Vector3 } from 'three'
 import { TRACK_SIZE } from '../config'
 import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
 import { useRenderSettings } from '../render/useRenderSettings'
 
 const tempDistanceVec = new Vector3()
+const TERRAIN_LOD_HYSTERESIS = 8
+const ROAD_LOD_HYSTERESIS = 8
+
+const resolveNearLod = (distance: number, threshold: number, hysteresis: number, previous: boolean | null) => {
+  if (previous === null) {
+    return distance < threshold
+  }
+  if (previous) {
+    return distance < threshold + hysteresis
+  }
+  return distance < threshold - hysteresis
+}
 
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
@@ -63,13 +75,23 @@ export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) =
     return [createTexture(true), createTexture(false)] as const
   }, [render.detailDensity, render.roadTextureResolution, worldHalf])
 
+  useEffect(() => {
+    nearModeRef.current = null
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') {
+      return
+    }
+    material.map = nearTexture
+    material.needsUpdate = true
+  }, [farTexture, nearTexture, render.mode])
+
   useFrame(() => {
     const material = materialRef.current
     if (!material || render.mode !== 'pretty') {
       return
     }
     const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
-    const isNear = distance < render.terrainNearDistance
+    const isNear = resolveNearLod(distance, render.terrainNearDistance, TERRAIN_LOD_HYSTERESIS, nearModeRef.current)
     if (nearModeRef.current === isNear) {
       return
     }
@@ -86,7 +108,7 @@ export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) =
         {render.mode === 'flat-debug' ? (
           <meshStandardMaterial color="#62b873" roughness={1} metalness={0} wireframe={render.wireframe} />
         ) : (
-          <meshStandardMaterial ref={materialRef} color="#4cb35f" map={nearTexture} roughness={0.88} metalness={0.04} />
+          <meshStandardMaterial ref={materialRef} color="#4cb35f" roughness={0.88} metalness={0.04} />
         )}
       </mesh>
       {render.mode === 'pretty' ? (
@@ -161,11 +183,21 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
     return [createTexture(true), createTexture(false)] as const
   }, [innerHalf, outerHalf, render.detailDensity, render.roadTextureResolution])
 
+  useEffect(() => {
+    nearModeRef.current = null
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') {
+      return
+    }
+    material.map = nearTexture
+    material.needsUpdate = true
+  }, [farTexture, nearTexture, render.mode])
+
   useFrame(() => {
     const material = materialRef.current
     if (!material || render.mode !== 'pretty') return
     const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
-    const isNear = distance < render.roadNearDistance
+    const isNear = resolveNearLod(distance, render.roadNearDistance, ROAD_LOD_HYSTERESIS, nearModeRef.current)
     if (nearModeRef.current === isNear) return
     nearModeRef.current = isNear
     material.map = isNear ? nearTexture : farTexture
@@ -180,7 +212,7 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
       {render.mode === 'flat-debug' ? (
         <meshStandardMaterial color="#60656d" roughness={0.95} metalness={0} wireframe={render.wireframe} />
       ) : (
-        <meshStandardMaterial ref={materialRef} map={nearTexture} transparent roughness={0.85} metalness={0.16} />
+        <meshStandardMaterial ref={materialRef} transparent roughness={0.85} metalness={0.16} />
       )}
     </mesh>
   )
@@ -264,6 +296,16 @@ export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegme
     return [createTexture(true), createTexture(false)] as const
   }, [map.roadPath, map.roadWidth, map.worldHalf, render.detailDensity, render.roadTextureResolution])
 
+  useEffect(() => {
+    nearModeRef.current = null
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') {
+      return
+    }
+    material.map = nearTexture
+    material.needsUpdate = true
+  }, [farTexture, nearTexture, render.mode])
+
   const roadGeometry = useMemo(() => {
     const size = map.worldHalf * 2
     const segments = terrainSegments ?? render.terrainSegments
@@ -284,7 +326,7 @@ export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegme
     const material = materialRef.current
     if (!material || render.mode !== 'pretty') return
     const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
-    const isNear = distance < render.roadNearDistance
+    const isNear = resolveNearLod(distance, render.roadNearDistance, ROAD_LOD_HYSTERESIS, nearModeRef.current)
     if (nearModeRef.current === isNear) return
     nearModeRef.current = isNear
     material.map = isNear ? nearTexture : farTexture
@@ -298,7 +340,7 @@ export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegme
       {render.mode === 'flat-debug' ? (
         <meshStandardMaterial color="#5f656d" roughness={1} metalness={0} wireframe={render.wireframe} />
       ) : (
-        <meshStandardMaterial ref={materialRef} map={nearTexture} transparent roughness={0.84} metalness={0.2} />
+        <meshStandardMaterial ref={materialRef} transparent roughness={0.84} metalness={0.2} />
       )}
     </mesh>
   )
@@ -455,6 +497,16 @@ export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terr
     return [createTexture(true), createTexture(false)] as const
   }, [map.roadPath, map.roadWidth, map.worldHalf, render.detailDensity, render.roadTextureResolution])
 
+  useEffect(() => {
+    nearModeRef.current = null
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') {
+      return
+    }
+    material.map = nearTexture
+    material.needsUpdate = true
+  }, [farTexture, nearTexture, render.mode])
+
   const terrainGeometry = useMemo(() => {
     const size = map.worldHalf * 2
     const segments = terrainSegments ?? render.terrainSegments
@@ -486,7 +538,7 @@ export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terr
     const material = materialRef.current
     if (!material || render.mode !== 'pretty') return
     const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
-    const isNear = distance < render.terrainNearDistance
+    const isNear = resolveNearLod(distance, render.terrainNearDistance, TERRAIN_LOD_HYSTERESIS, nearModeRef.current)
     if (nearModeRef.current === isNear) return
     nearModeRef.current = isNear
     material.map = isNear ? nearTexture : farTexture
@@ -501,7 +553,7 @@ export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terr
         {render.mode === 'flat-debug' ? (
           <meshStandardMaterial color="#5aa267" roughness={1} metalness={0} wireframe={render.wireframe} />
         ) : (
-          <meshStandardMaterial ref={materialRef} map={nearTexture} roughness={0.88} metalness={0.06} />
+          <meshStandardMaterial ref={materialRef} roughness={0.88} metalness={0.06} />
         )}
       </mesh>
       {render.mode === 'pretty' ? (

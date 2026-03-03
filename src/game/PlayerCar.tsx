@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
-import { MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
+import { MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
 import { createInputState, getMergedInput } from './keys'
 import { getTrackMap, sampleTerrainHeight } from './maps'
 import { playPickupSound, setEngineMuted, stopEngineSound, updateEngineSound } from './sfx'
@@ -109,8 +109,12 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
   const startPosition = useMemo(() => {
     const x = map.startPosition[0]
+    const y =
+      map.shape === 'ring'
+        ? map.startPosition[1]
+        : sampleTerrainHeight(map, x, map.startPosition[2]) + VEHICLE_PHYSICS.suspensionRideHeight + 0.06
     const z = map.startPosition[2]
-    return { x, y: sampleTerrainHeight(map, x, z) + 1.05, z }
+    return { x, y, z }
   }, [map])
   const startYaw = map.startYaw
 

@@ -73,7 +73,7 @@ export const VEHICLE_PHYSICS = {
   engineBrake: 4.5,
   rollingResistance: 0.35,
   aeroDrag: 0.01,
-  suspensionRideHeight: 0.72,
+  suspensionRideHeight: 0.34,
   suspensionSpring: 24,
   suspensionDamping: 9.5,
   suspensionImpulseClamp: 16,

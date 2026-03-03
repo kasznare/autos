@@ -365,6 +365,8 @@ type DynamicsParams = {
   getImpactLabel: (material: 'rubber' | 'wood' | 'metal' | 'rock' | 'glass', tier: 'minor' | 'moderate' | 'major' | 'critical', scrape?: boolean) => string
 }
 
+const getDriveTerrainHeight = (map: TrackMap, x: number, z: number) => (map.shape === 'ring' ? 0 : sampleTerrainHeight(map, x, z))
+
 export const runVehicleDynamicsStep = ({
   body,
   delta,
@@ -430,7 +432,7 @@ export const runVehicleDynamicsStep = ({
   const gripScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.gripLoss
   const driveMass = Math.max(0.8, body.mass())
 
-  const terrainHeight = sampleTerrainHeight(map, pos.x, pos.z)
+  const terrainHeight = getDriveTerrainHeight(map, pos.x, pos.z)
   const targetRideY = terrainHeight + VEHICLE_PHYSICS.suspensionRideHeight
   const groundDistance = pos.y - targetRideY
   const nearGround = groundDistance <= VEHICLE_PHYSICS.groundingHeightBias
@@ -535,7 +537,7 @@ export const runVehicleDynamicsStep = ({
     vehiclePhysicsTuning.steeringMult
   const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
   steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
-  const reverseSteer = nextForwardSpeed < -0.15 ? -0.55 : 1
+  const reverseSteer = nextForwardSpeed < -0.15 ? 0.55 : 1
   const targetYawRate =
     ((nextForwardSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) * Math.tan(steerAngleRef.current) * reverseSteer) /
     Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
@@ -558,10 +560,10 @@ export const runVehicleDynamicsStep = ({
   const yawError = normalizeAngleDelta(nextYaw - yaw)
   const yawRateError = targetYawRate - angVel.y
   const normalSampleOffset = 0.9
-  const hLeft = sampleTerrainHeight(map, pos.x - normalSampleOffset, pos.z)
-  const hRight = sampleTerrainHeight(map, pos.x + normalSampleOffset, pos.z)
-  const hForward = sampleTerrainHeight(map, pos.x, pos.z + normalSampleOffset)
-  const hBackward = sampleTerrainHeight(map, pos.x, pos.z - normalSampleOffset)
+  const hLeft = getDriveTerrainHeight(map, pos.x - normalSampleOffset, pos.z)
+  const hRight = getDriveTerrainHeight(map, pos.x + normalSampleOffset, pos.z)
+  const hForward = getDriveTerrainHeight(map, pos.x, pos.z + normalSampleOffset)
+  const hBackward = getDriveTerrainHeight(map, pos.x, pos.z - normalSampleOffset)
   let nx = hLeft - hRight
   let ny = normalSampleOffset * 2
   let nz = hBackward - hForward
@@ -585,12 +587,25 @@ export const runVehicleDynamicsStep = ({
   const alignAxisZ = upX * ny - upY * nx
   const alignBlend = Math.max(0, Math.min(1, 1 - groundDistance / 1.4))
   const alignStrength = VEHICLE_PHYSICS.slopeAlignTorque * alignBlend
+  let torqueX = alignAxisX * alignStrength - angVel.x * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend)
+  let torqueY = yawError * (1.8 + Math.abs(nextForwardSpeed) * 0.32) + yawRateError * 0.9
+  let torqueZ = alignAxisZ * alignStrength - angVel.z * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend)
+
+  // Keep terrain-reactive tilt, but prevent excessive roll/pitch flips.
+  const maxTiltCos = Math.cos(Math.PI * 0.23)
+  if (upY < maxTiltCos) {
+    const overTilt = maxTiltCos - upY
+    const recover = Math.min(3.2, overTilt * 6.4)
+    torqueX += upZ * recover
+    torqueZ += -upX * recover
+    torqueY -= angVel.y * Math.min(0.6, overTilt * 0.8)
+  }
 
   body.applyTorqueImpulse(
     {
-      x: alignAxisX * alignStrength - angVel.x * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend),
-      y: yawError * (1.8 + Math.abs(nextForwardSpeed) * 0.32) + yawRateError * 0.9,
-      z: alignAxisZ * alignStrength - angVel.z * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend),
+      x: torqueX,
+      y: torqueY,
+      z: torqueZ,
     },
     true,
   )

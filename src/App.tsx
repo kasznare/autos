@@ -1,4 +1,4 @@
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { useEffect, useMemo, useState } from 'react'
 import { GameScene } from './game/GameScene'
@@ -9,6 +9,26 @@ import { deriveQualityTier, getQualityConfig } from './game/systems'
 import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
 import { GarageOverlay } from './game/ui/builder/GarageOverlay'
+
+const FrameLimiter = ({ active, fps = 60 }: { active: boolean; fps?: number }) => {
+  const invalidate = useThree((state) => state.invalidate)
+
+  useEffect(() => {
+    if (!active) {
+      return
+    }
+    const intervalMs = 1000 / fps
+    invalidate()
+    const timer = window.setInterval(() => {
+      invalidate()
+    }, intervalMs)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [active, fps, invalidate])
+
+  return null
+}
 
 export const App = () => {
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
@@ -91,16 +111,24 @@ export const App = () => {
   return (
     <div className="app-shell">
       <Canvas
-        frameloop={paused ? 'never' : 'always'}
+        frameloop={paused ? 'never' : 'demand'}
         shadows={qualityConfig.shadows}
         dpr={qualityConfig.dpr}
         gl={{ antialias: qualityConfig.antialias, powerPreference: qualityConfig.powerPreference, stencil: false }}
         camera={{ fov: 55, position: [0, 8, 16] }}
       >
+        <FrameLimiter active={!paused} fps={touchDevice ? 30 : 60} />
         <color attach="background" args={['#8cd3f0']} />
         <fog attach="fog" args={['#8cd3f0', 25, 80]} />
         <Physics gravity={mapGravity}>
-          <GameScene lowPowerMode={lowPowerMode} qualityTier={qualityTier} qualityConfig={qualityConfig} roomId={roomId} isRoomHost={isRoomHost} />
+          <GameScene
+            lowPowerMode={lowPowerMode}
+            qualityTier={qualityTier}
+            qualityConfig={qualityConfig}
+            runtimeActive={!paused}
+            roomId={roomId}
+            isRoomHost={isRoomHost}
+          />
         </Physics>
       </Canvas>
       <Hud
