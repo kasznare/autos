@@ -1,10 +1,12 @@
+import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
-import { useMemo } from 'react'
-import { CanvasTexture, PlaneGeometry, RepeatWrapping } from 'three'
+import { useMemo, useRef } from 'react'
+import { BackSide, CanvasTexture, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, Vector3 } from 'three'
 import { TRACK_SIZE } from '../config'
 import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
+import { useRenderSettings } from '../render/useRenderSettings'
 
-const TERRAIN_MESH_SEGMENTS = 280
+const tempDistanceVec = new Vector3()
 
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
@@ -12,180 +14,260 @@ const pseudoNoise = (index: number, salt: number) => {
 }
 
 export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) => {
-  const groundTexture = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 256
-    canvas.height = 256
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return null
-    }
+  const render = useRenderSettings()
+  const { camera } = useThree()
+  const materialRef = useRef<MeshStandardMaterial | null>(null)
+  const nearModeRef = useRef<boolean | null>(null)
+  const [nearTexture, farTexture] = useMemo(() => {
+    const createTexture = (near: boolean) => {
+      const canvas = document.createElement('canvas')
+      const resolution = Math.max(192, Math.round(render.roadTextureResolution * 0.6))
+      canvas.width = resolution
+      canvas.height = resolution
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return null
+      }
 
-    ctx.fillStyle = '#4aab5e'
-    ctx.fillRect(0, 0, 256, 256)
-    ctx.fillStyle = '#5cbe6d'
-    for (let y = 0; y < 256; y += 32) {
-      for (let x = 0; x < 256; x += 32) {
-        if ((x + y) % 64 === 0) {
-          ctx.fillRect(x, y, 32, 32)
+      const tile = near ? 28 : 44
+      ctx.fillStyle = near ? '#4cae61' : '#509a5c'
+      ctx.fillRect(0, 0, resolution, resolution)
+      ctx.fillStyle = near ? '#63c975' : '#5bab66'
+      for (let y = 0; y < resolution; y += tile) {
+        for (let x = 0; x < resolution; x += tile) {
+          if (((x + y) / tile) % 2 === 0) {
+            ctx.fillRect(x, y, tile, tile)
+          }
         }
       }
-    }
-    for (let i = 0; i < 520; i += 1) {
-      const x = pseudoNoise(i, 1) * 256
-      const y = pseudoNoise(i, 2) * 256
-      const len = 2 + pseudoNoise(i, 3) * 4
-      ctx.strokeStyle = pseudoNoise(i, 4) > 0.5 ? 'rgba(38, 110, 52, 0.22)' : 'rgba(126, 191, 106, 0.2)'
-      ctx.lineWidth = 0.8 + pseudoNoise(i, 5) * 0.8
-      ctx.beginPath()
-      ctx.moveTo(x, y)
-      ctx.lineTo(x + len * 0.4, y - len)
-      ctx.stroke()
-    }
-    for (let i = 0; i < 320; i += 1) {
-      const x = pseudoNoise(i, 21) * 256
-      const y = pseudoNoise(i, 22) * 256
-      const r = 0.8 + pseudoNoise(i, 23) * 2.2
-      ctx.fillStyle = pseudoNoise(i, 24) > 0.5 ? 'rgba(39, 98, 45, 0.15)' : 'rgba(148, 203, 118, 0.12)'
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
 
-    const texture = new CanvasTexture(canvas)
-    texture.wrapS = RepeatWrapping
-    texture.wrapT = RepeatWrapping
-    texture.repeat.set(Math.max(10, worldHalf / 3), Math.max(10, worldHalf / 3))
-    return texture
-  }, [worldHalf])
+      const blades = Math.floor((near ? 2100 : 850) * render.detailDensity)
+      for (let i = 0; i < blades; i += 1) {
+        const x = pseudoNoise(i, near ? 1 : 61) * resolution
+        const y = pseudoNoise(i, near ? 2 : 62) * resolution
+        const len = (near ? 5 : 2.6) * (0.5 + pseudoNoise(i, near ? 3 : 63))
+        ctx.strokeStyle = near ? 'rgba(38, 110, 52, 0.22)' : 'rgba(62, 124, 72, 0.11)'
+        ctx.lineWidth = near ? 0.9 : 0.6
+        ctx.beginPath()
+        ctx.moveTo(x, y)
+        ctx.lineTo(x + len * 0.4, y - len)
+        ctx.stroke()
+      }
+
+      const texture = new CanvasTexture(canvas)
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      texture.repeat.set(Math.max(10, worldHalf / 3), Math.max(10, worldHalf / 3))
+      return texture
+    }
+    return [createTexture(true), createTexture(false)] as const
+  }, [render.detailDensity, render.roadTextureResolution, worldHalf])
+
+  useFrame(() => {
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') {
+      return
+    }
+    const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
+    const isNear = distance < render.terrainNearDistance
+    if (nearModeRef.current === isNear) {
+      return
+    }
+    nearModeRef.current = isNear
+    material.map = isNear ? nearTexture : farTexture
+    material.roughness = isNear ? 0.88 : 0.96
+    material.needsUpdate = true
+  })
 
   return (
     <RigidBody type="fixed" colliders={false} name="terrain-ground-ring">
-      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh receiveShadow={render.mode === 'pretty'} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[worldHalf * 2, worldHalf * 2]} />
-        <meshStandardMaterial color="#4cb35f" map={groundTexture} roughness={0.95} />
+        {render.mode === 'flat-debug' ? (
+          <meshStandardMaterial color="#62b873" roughness={1} metalness={0} wireframe={render.wireframe} />
+        ) : (
+          <meshStandardMaterial ref={materialRef} color="#4cb35f" map={nearTexture} roughness={0.88} metalness={0.04} />
+        )}
       </mesh>
+      {render.mode === 'pretty' ? (
+        <mesh scale={[220, 220, 220]}>
+          <sphereGeometry args={[1, 28, 20]} />
+          <meshBasicMaterial color={render.sky.horizonColor} side={BackSide} fog={false} />
+        </mesh>
+      ) : null}
       <CuboidCollider args={[worldHalf, 0.2, worldHalf]} position={[0, -0.2, 0]} />
     </RigidBody>
   )
 }
 
 export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHalf: number }) => {
-  const roadTexture = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1024
-    canvas.height = 1024
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return null
+  const render = useRenderSettings()
+  const { camera } = useThree()
+  const materialRef = useRef<MeshStandardMaterial | null>(null)
+  const nearModeRef = useRef<boolean | null>(null)
+  const [nearTexture, farTexture] = useMemo(() => {
+    const createTexture = (near: boolean) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = render.roadTextureResolution
+      canvas.height = render.roadTextureResolution
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return null
+      }
+
+      const toCanvas = (v: number) => ((v / TRACK_SIZE) + 0.5) * canvas.width
+      const outerMin = toCanvas(-outerHalf)
+      const outerMax = toCanvas(outerHalf)
+      const innerMin = toCanvas(-innerHalf)
+      const innerMax = toCanvas(innerHalf)
+      const midHalf = (outerHalf + innerHalf) / 2
+      const midMin = toCanvas(-midHalf)
+      const midMax = toCanvas(midHalf)
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = near ? '#2f3338' : '#343943'
+      ctx.fillRect(outerMin, outerMin, outerMax - outerMin, outerMax - outerMin)
+      ctx.clearRect(innerMin, innerMin, innerMax - innerMin, innerMax - innerMin)
+
+      const gravel = Math.floor((near ? 3000 : 1150) * render.detailDensity)
+      for (let i = 0; i < gravel; i += 1) {
+        const x = pseudoNoise(i, near ? 201 : 251) * canvas.width
+        const y = pseudoNoise(i, near ? 202 : 252) * canvas.height
+        const r = near ? 0.4 + pseudoNoise(i, 203) * 1.8 : 0.2 + pseudoNoise(i, 253) * 0.8
+        ctx.fillStyle = near ? 'rgba(126, 132, 140, 0.18)' : 'rgba(115, 122, 130, 0.09)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.strokeStyle = near ? 'rgba(183, 151, 98, 0.55)' : 'rgba(157, 136, 95, 0.4)'
+      ctx.lineWidth = near ? 18 : 12
+      ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
+      ctx.strokeStyle = near ? '#4f545d' : '#464d58'
+      ctx.lineWidth = near ? 10 : 8
+      ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
+
+      ctx.strokeStyle = near ? '#f7f7f0' : '#e5e5dd'
+      ctx.lineWidth = near ? 6 : 4
+      ctx.setLineDash(near ? [24, 18] : [20, 20])
+      ctx.strokeRect(midMin, midMin, midMax - midMin, midMax - midMin)
+      ctx.setLineDash([])
+
+      const texture = new CanvasTexture(canvas)
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      return texture
     }
+    return [createTexture(true), createTexture(false)] as const
+  }, [innerHalf, outerHalf, render.detailDensity, render.roadTextureResolution])
 
-    const toCanvas = (v: number) => ((v / TRACK_SIZE) + 0.5) * canvas.width
-
-    const outerMin = toCanvas(-outerHalf)
-    const outerMax = toCanvas(outerHalf)
-    const innerMin = toCanvas(-innerHalf)
-    const innerMax = toCanvas(innerHalf)
-    const midHalf = (outerHalf + innerHalf) / 2
-    const midMin = toCanvas(-midHalf)
-    const midMax = toCanvas(midHalf)
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    ctx.fillStyle = '#2f3338'
-    ctx.fillRect(outerMin, outerMin, outerMax - outerMin, outerMax - outerMin)
-    ctx.clearRect(innerMin, innerMin, innerMax - innerMin, innerMax - innerMin)
-
-    ctx.strokeStyle = 'rgba(183, 151, 98, 0.55)'
-    ctx.lineWidth = 18
-    ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
-    ctx.strokeStyle = '#4f545d'
-    ctx.lineWidth = 10
-    ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
-
-    ctx.strokeStyle = '#f7f7f0'
-    ctx.lineWidth = 6
-    ctx.setLineDash([24, 18])
-    ctx.strokeRect(midMin, midMin, midMax - midMin, midMax - midMin)
-    ctx.setLineDash([])
-
-    const texture = new CanvasTexture(canvas)
-    texture.wrapS = RepeatWrapping
-    texture.wrapT = RepeatWrapping
-    return texture
-  }, [outerHalf, innerHalf])
+  useFrame(() => {
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') return
+    const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
+    const isNear = distance < render.roadNearDistance
+    if (nearModeRef.current === isNear) return
+    nearModeRef.current = isNear
+    material.map = isNear ? nearTexture : farTexture
+    material.roughness = isNear ? 0.85 : 0.95
+    material.metalness = isNear ? 0.16 : 0.08
+    material.needsUpdate = true
+  })
 
   return (
-    <mesh receiveShadow position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh receiveShadow={render.mode === 'pretty'} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[TRACK_SIZE, TRACK_SIZE]} />
-      <meshStandardMaterial map={roadTexture} transparent roughness={0.92} metalness={0.12} />
+      {render.mode === 'flat-debug' ? (
+        <meshStandardMaterial color="#60656d" roughness={0.95} metalness={0} wireframe={render.wireframe} />
+      ) : (
+        <meshStandardMaterial ref={materialRef} map={nearTexture} transparent roughness={0.85} metalness={0.16} />
+      )}
     </mesh>
   )
 }
 
-export const RoadPath = ({ map }: { map: TrackMap }) => {
-  const roadTexture = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1024
-    canvas.height = 1024
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return null
+export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
+  const render = useRenderSettings()
+  const { camera } = useThree()
+  const materialRef = useRef<MeshStandardMaterial | null>(null)
+  const nearModeRef = useRef<boolean | null>(null)
+  const [nearTexture, farTexture] = useMemo(() => {
+    const createTexture = (near: boolean) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = render.roadTextureResolution
+      canvas.height = render.roadTextureResolution
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return null
+      }
+      const worldSize = map.worldHalf * 2
+      const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
+      const lineWidth = (map.roadWidth / worldSize) * canvas.width
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.strokeStyle = near ? 'rgba(176, 148, 100, 0.5)' : 'rgba(159, 141, 110, 0.36)'
+      ctx.lineWidth = lineWidth + Math.max(6, lineWidth * 0.25)
+      ctx.beginPath()
+      map.roadPath.forEach((point, idx) => {
+        const x = toCanvas(point[0])
+        const y = toCanvas(point[1])
+        if (idx === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      })
+      if (map.roadPath.length > 0) {
+        ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
+      }
+      ctx.stroke()
+
+      ctx.strokeStyle = near ? '#2f3338' : '#343b46'
+      ctx.lineWidth = lineWidth
+      ctx.beginPath()
+      map.roadPath.forEach((point, idx) => {
+        const x = toCanvas(point[0])
+        const y = toCanvas(point[1])
+        if (idx === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      })
+      if (map.roadPath.length > 0) {
+        ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
+      }
+      ctx.stroke()
+
+      const grain = Math.floor((near ? 3200 : 1100) * render.detailDensity)
+      for (let i = 0; i < grain; i += 1) {
+        const x = pseudoNoise(i, near ? 301 : 351) * canvas.width
+        const y = pseudoNoise(i, near ? 302 : 352) * canvas.height
+        const r = near ? 0.4 + pseudoNoise(i, 303) * 1.5 : 0.2 + pseudoNoise(i, 353) * 0.8
+        ctx.fillStyle = near ? 'rgba(139, 144, 148, 0.16)' : 'rgba(126, 132, 136, 0.08)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.strokeStyle = near ? '#4f545d' : '#474d57'
+      ctx.lineWidth = Math.max(8, lineWidth * 0.18)
+      ctx.stroke()
+
+      ctx.strokeStyle = near ? '#f7f7f0' : '#e6e6df'
+      ctx.setLineDash(near ? [26, 18] : [18, 20])
+      ctx.lineWidth = Math.max(4, lineWidth * 0.14)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      const texture = new CanvasTexture(canvas)
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      return texture
     }
-    const worldSize = map.worldHalf * 2
-    const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
-    const lineWidth = (map.roadWidth / worldSize) * canvas.width
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    ctx.strokeStyle = 'rgba(176, 148, 100, 0.5)'
-    ctx.lineWidth = lineWidth + Math.max(6, lineWidth * 0.25)
-    ctx.beginPath()
-    map.roadPath.forEach((point, idx) => {
-      const x = toCanvas(point[0])
-      const y = toCanvas(point[1])
-      if (idx === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    })
-    if (map.roadPath.length > 0) {
-      ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
-    }
-    ctx.stroke()
-
-    ctx.strokeStyle = '#2f3338'
-    ctx.lineWidth = lineWidth
-    ctx.beginPath()
-    map.roadPath.forEach((point, idx) => {
-      const x = toCanvas(point[0])
-      const y = toCanvas(point[1])
-      if (idx === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    })
-    if (map.roadPath.length > 0) {
-      ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
-    }
-    ctx.stroke()
-
-    ctx.strokeStyle = '#4f545d'
-    ctx.lineWidth = Math.max(8, lineWidth * 0.18)
-    ctx.stroke()
-
-    ctx.strokeStyle = '#f7f7f0'
-    ctx.setLineDash([26, 18])
-    ctx.lineWidth = Math.max(4, lineWidth * 0.14)
-    ctx.stroke()
-    ctx.setLineDash([])
-
-    const texture = new CanvasTexture(canvas)
-    texture.wrapS = RepeatWrapping
-    texture.wrapT = RepeatWrapping
-    return texture
-  }, [map.roadPath, map.roadWidth, map.worldHalf])
+    return [createTexture(true), createTexture(false)] as const
+  }, [map.roadPath, map.roadWidth, map.worldHalf, render.detailDensity, render.roadTextureResolution])
 
   const roadGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, TERRAIN_MESH_SEGMENTS, TERRAIN_MESH_SEGMENTS)
+    const segments = terrainSegments ?? render.terrainSegments
+    const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -196,123 +278,133 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map])
+  }, [map, render.terrainSegments, terrainSegments])
+
+  useFrame(() => {
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') return
+    const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
+    const isNear = distance < render.roadNearDistance
+    if (nearModeRef.current === isNear) return
+    nearModeRef.current = isNear
+    material.map = isNear ? nearTexture : farTexture
+    material.roughness = isNear ? 0.84 : 0.95
+    material.metalness = isNear ? 0.2 : 0.08
+    material.needsUpdate = true
+  })
 
   return (
-    <mesh receiveShadow geometry={roadGeometry}>
-      <meshStandardMaterial map={roadTexture} transparent roughness={0.92} metalness={0.12} />
+    <mesh receiveShadow={render.mode === 'pretty'} geometry={roadGeometry}>
+      {render.mode === 'flat-debug' ? (
+        <meshStandardMaterial color="#5f656d" roughness={1} metalness={0} wireframe={render.wireframe} />
+      ) : (
+        <meshStandardMaterial ref={materialRef} map={nearTexture} transparent roughness={0.84} metalness={0.2} />
+      )}
     </mesh>
   )
 }
 
-export const ProceduralGround = ({ map }: { map: TrackMap }) => {
-  const terrainTexture = useMemo(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1024
-    canvas.height = 1024
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return null
-    }
-    const worldSize = map.worldHalf * 2
-    const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
-    const drawClosedPath = () => {
-      map.roadPath.forEach((point, idx) => {
-        const x = toCanvas(point[0])
-        const y = toCanvas(point[1])
-        if (idx === 0) {
-          ctx.moveTo(x, y)
-          return
-        }
-        ctx.lineTo(x, y)
-      })
-      if (map.roadPath.length > 0) {
-        ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
+export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
+  const render = useRenderSettings()
+  const { camera } = useThree()
+  const materialRef = useRef<MeshStandardMaterial | null>(null)
+  const nearModeRef = useRef<boolean | null>(null)
+  const [nearTexture, farTexture] = useMemo(() => {
+    const createTexture = (near: boolean) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = render.roadTextureResolution
+      canvas.height = render.roadTextureResolution
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return null
       }
-    }
-
-    ctx.fillStyle = '#4a9f57'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
-    baseGradient.addColorStop(0, 'rgba(89, 164, 98, 0.42)')
-    baseGradient.addColorStop(0.5, 'rgba(70, 140, 78, 0.22)')
-    baseGradient.addColorStop(1, 'rgba(101, 180, 112, 0.38)')
-    ctx.fillStyle = baseGradient
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    ctx.fillStyle = 'rgba(115, 186, 111, 0.14)'
-    for (let y = 0; y < canvas.height; y += 56) {
-      for (let x = 0; x < canvas.width; x += 56) {
-        if (((x + y) / 56) % 2 === 0) {
-          ctx.fillRect(x, y, 56, 56)
+      const worldSize = map.worldHalf * 2
+      const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
+      const drawClosedPath = () => {
+        map.roadPath.forEach((point, idx) => {
+          const x = toCanvas(point[0])
+          const y = toCanvas(point[1])
+          if (idx === 0) {
+            ctx.moveTo(x, y)
+            return
+          }
+          ctx.lineTo(x, y)
+        })
+        if (map.roadPath.length > 0) {
+          ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
         }
       }
-    }
 
-    for (let i = 0; i < 2000; i += 1) {
-      const x = pseudoNoise(i, 101) * canvas.width
-      const y = pseudoNoise(i, 102) * canvas.height
-      const r = 8 + pseudoNoise(i, 103) * 24
-      ctx.fillStyle = pseudoNoise(i, 104) > 0.5 ? 'rgba(49, 117, 56, 0.07)' : 'rgba(130, 197, 118, 0.06)'
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
+      ctx.fillStyle = near ? '#4a9f57' : '#4d9257'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
+      baseGradient.addColorStop(0, near ? 'rgba(89, 164, 98, 0.42)' : 'rgba(84, 151, 92, 0.28)')
+      baseGradient.addColorStop(0.5, near ? 'rgba(70, 140, 78, 0.22)' : 'rgba(69, 130, 77, 0.16)')
+      baseGradient.addColorStop(1, near ? 'rgba(101, 180, 112, 0.38)' : 'rgba(95, 164, 106, 0.22)')
+      ctx.fillStyle = baseGradient
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    for (let i = 0; i < 5200; i += 1) {
-      const x = pseudoNoise(i, 11) * canvas.width
-      const y = pseudoNoise(i, 12) * canvas.height
-      const len = 3 + pseudoNoise(i, 13) * 7
-      ctx.strokeStyle = pseudoNoise(i, 14) > 0.5 ? 'rgba(40, 108, 49, 0.2)' : 'rgba(137, 200, 114, 0.17)'
-      ctx.lineWidth = 0.7 + pseudoNoise(i, 15) * 1.1
+      const patchSize = near ? 56 : 72
+      ctx.fillStyle = near ? 'rgba(115, 186, 111, 0.14)' : 'rgba(102, 167, 96, 0.08)'
+      for (let y = 0; y < canvas.height; y += patchSize) {
+        for (let x = 0; x < canvas.width; x += patchSize) {
+          if (((x + y) / patchSize) % 2 === 0) {
+            ctx.fillRect(x, y, patchSize, patchSize)
+          }
+        }
+      }
+
+      const blades = Math.floor((near ? 4300 : 1550) * render.detailDensity)
+      for (let i = 0; i < blades; i += 1) {
+        const x = pseudoNoise(i, near ? 401 : 451) * canvas.width
+        const y = pseudoNoise(i, near ? 402 : 452) * canvas.height
+        const len = (near ? 7 : 3.8) * (0.45 + pseudoNoise(i, near ? 403 : 453))
+        ctx.strokeStyle = near ? 'rgba(40, 108, 49, 0.2)' : 'rgba(53, 114, 63, 0.11)'
+        ctx.lineWidth = near ? 0.9 : 0.55
+        ctx.beginPath()
+        ctx.moveTo(x, y)
+        ctx.lineTo(x + len * 0.35, y - len)
+        ctx.stroke()
+      }
+
+      const stones = Math.floor((near ? 1800 : 680) * render.detailDensity)
+      for (let i = 0; i < stones; i += 1) {
+        const x = pseudoNoise(i, near ? 421 : 471) * canvas.width
+        const y = pseudoNoise(i, near ? 422 : 472) * canvas.height
+        const r = near ? 0.6 + pseudoNoise(i, 423) * 2.2 : 0.4 + pseudoNoise(i, 473) * 1.1
+        ctx.fillStyle = near ? 'rgba(170, 162, 138, 0.1)' : 'rgba(108, 105, 96, 0.06)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      const shoulderWidth = ((map.roadWidth * 1.8) / worldSize) * canvas.width
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.strokeStyle = near ? 'rgba(139, 120, 84, 0.24)' : 'rgba(126, 112, 86, 0.18)'
+      ctx.lineWidth = shoulderWidth
       ctx.beginPath()
-      ctx.moveTo(x, y)
-      ctx.lineTo(x + len * 0.35, y - len)
+      drawClosedPath()
       ctx.stroke()
-    }
-    for (let i = 0; i < 2600; i += 1) {
-      const x = pseudoNoise(i, 31) * canvas.width
-      const y = pseudoNoise(i, 32) * canvas.height
-      const r = 1 + pseudoNoise(i, 33) * 4
-      ctx.fillStyle = pseudoNoise(i, 34) > 0.52 ? 'rgba(37, 96, 43, 0.14)' : 'rgba(141, 197, 113, 0.12)'
+
+      ctx.strokeStyle = near ? 'rgba(108, 141, 87, 0.26)' : 'rgba(94, 123, 75, 0.2)'
+      ctx.lineWidth = shoulderWidth * 0.6
       ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
+      drawClosedPath()
+      ctx.stroke()
+
+      const texture = new CanvasTexture(canvas)
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      return texture
     }
-    for (let i = 0; i < 1200; i += 1) {
-      const x = pseudoNoise(i, 121) * canvas.width
-      const y = pseudoNoise(i, 122) * canvas.height
-      const r = 0.6 + pseudoNoise(i, 123) * 1.8
-      ctx.fillStyle = pseudoNoise(i, 124) > 0.5 ? 'rgba(176, 168, 143, 0.1)' : 'rgba(94, 89, 74, 0.08)'
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    const shoulderWidth = ((map.roadWidth * 1.8) / worldSize) * canvas.width
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    ctx.strokeStyle = 'rgba(139, 120, 84, 0.24)'
-    ctx.lineWidth = shoulderWidth
-    ctx.beginPath()
-    drawClosedPath()
-    ctx.stroke()
-
-    ctx.strokeStyle = 'rgba(108, 141, 87, 0.26)'
-    ctx.lineWidth = shoulderWidth * 0.6
-    ctx.beginPath()
-    drawClosedPath()
-    ctx.stroke()
-
-    const texture = new CanvasTexture(canvas)
-    texture.wrapS = RepeatWrapping
-    texture.wrapT = RepeatWrapping
-    return texture
-  }, [map.roadPath, map.roadWidth, map.worldHalf])
+    return [createTexture(true), createTexture(false)] as const
+  }, [map.roadPath, map.roadWidth, map.worldHalf, render.detailDensity, render.roadTextureResolution])
 
   const terrainGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, TERRAIN_MESH_SEGMENTS, TERRAIN_MESH_SEGMENTS)
+    const segments = terrainSegments ?? render.terrainSegments
+    const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -323,7 +415,7 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map])
+  }, [map, render.terrainSegments, terrainSegments])
 
   const terrainColliderArgs = useMemo(() => {
     const posAttr = terrainGeometry.getAttribute('position')
@@ -336,11 +428,34 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
     return [vertices, indices] as [number[], number[]]
   }, [terrainGeometry])
 
+  useFrame(() => {
+    const material = materialRef.current
+    if (!material || render.mode !== 'pretty') return
+    const distance = camera.position.distanceTo(tempDistanceVec.set(0, 0, 0))
+    const isNear = distance < render.terrainNearDistance
+    if (nearModeRef.current === isNear) return
+    nearModeRef.current = isNear
+    material.map = isNear ? nearTexture : farTexture
+    material.roughness = isNear ? 0.88 : 0.96
+    material.metalness = isNear ? 0.06 : 0.02
+    material.needsUpdate = true
+  })
+
   return (
     <RigidBody type="fixed" colliders={false} name="terrain-ground-procedural">
-      <mesh receiveShadow geometry={terrainGeometry}>
-        <meshStandardMaterial map={terrainTexture} roughness={0.9} metalness={0.04} />
+      <mesh receiveShadow={render.mode === 'pretty'} geometry={terrainGeometry}>
+        {render.mode === 'flat-debug' ? (
+          <meshStandardMaterial color="#5aa267" roughness={1} metalness={0} wireframe={render.wireframe} />
+        ) : (
+          <meshStandardMaterial ref={materialRef} map={nearTexture} roughness={0.88} metalness={0.06} />
+        )}
       </mesh>
+      {render.mode === 'pretty' ? (
+        <mesh scale={[220, 220, 220]}>
+          <sphereGeometry args={[1, 28, 20]} />
+          <meshBasicMaterial color={render.sky.zenithColor} side={BackSide} fog={false} />
+        </mesh>
+      ) : null}
       {terrainColliderArgs ? <TrimeshCollider args={terrainColliderArgs} /> : null}
     </RigidBody>
   )
@@ -428,9 +543,11 @@ export const CheckpointGates = ({
 export const Trees = ({
   trees,
   map,
+  castShadows = true,
 }: {
   trees: { id: string; position: [number, number, number]; scale: number; variant: 'round' | 'cone' }[]
   map: TrackMap
+  castShadows?: boolean
 }) => (
   <group>
     {trees.map((tree) => (
@@ -442,17 +559,17 @@ export const Trees = ({
         position={[tree.position[0], sampleTerrainHeight(map, tree.position[0], tree.position[2]), tree.position[2]]}
       >
         <group scale={tree.scale}>
-          <mesh castShadow position={[0, 0.7, 0]}>
+          <mesh castShadow={castShadows} position={[0, 0.7, 0]}>
             <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
             <meshStandardMaterial color="#6f4a25" roughness={0.9} />
           </mesh>
           {tree.variant === 'round' ? (
-            <mesh castShadow position={[0, 1.75, 0]}>
+            <mesh castShadow={castShadows} position={[0, 1.75, 0]}>
               <sphereGeometry args={[0.7, 12, 12]} />
               <meshStandardMaterial color="#3d8f49" roughness={0.85} />
             </mesh>
           ) : (
-            <mesh castShadow position={[0, 1.8, 0]}>
+            <mesh castShadow={castShadows} position={[0, 1.8, 0]}>
               <coneGeometry args={[0.74, 1.35, 12]} />
               <meshStandardMaterial color="#3f944d" roughness={0.85} />
             </mesh>
@@ -464,10 +581,21 @@ export const Trees = ({
   </group>
 )
 
-export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) => {
+export const RoadsideDetails = ({
+  map,
+  seed,
+  density = 1,
+  castShadows = true,
+}: {
+  map: TrackMap
+  seed: number
+  density?: number
+  castShadows?: boolean
+}) => {
   const details = useMemo(() => {
     const out: Array<{ id: string; type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
-    const maxItems = map.shape === 'path' ? 180 : 70
+    const densityScale = Math.max(0.2, density)
+    const maxItems = Math.round((map.shape === 'path' ? 180 : 70) * densityScale)
     const half = map.worldHalf - 4
     for (let i = 0; i < 900 && out.length < maxItems; i += 1) {
       const nx = pseudoNoise(seed + i, 201) * 2 - 1
@@ -488,18 +616,18 @@ export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) 
       })
     }
     return out
-  }, [map, seed])
+  }, [density, map, seed])
 
   return (
     <group>
       {details.map((item) =>
         item.type === 'rock' ? (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow receiveShadow>
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows} receiveShadow={castShadows}>
             <dodecahedronGeometry args={[0.35, 0]} />
             <meshStandardMaterial color="#7c8374" roughness={0.93} />
           </mesh>
         ) : (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow>
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows}>
             <sphereGeometry args={[0.42, 8, 7]} />
             <meshStandardMaterial color="#4d9f58" roughness={0.88} />
           </mesh>
@@ -508,4 +636,3 @@ export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) 
     </group>
   )
 }
-

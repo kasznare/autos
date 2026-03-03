@@ -7,7 +7,7 @@ export const TRACK_SIZE = 60
 export const ROAD_OUTER_HALF = 23
 export const ROAD_INNER_HALF = 11
 
-export type ControlName = 'forward' | 'backward' | 'left' | 'right' | 'restart'
+export type ControlName = 'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart'
 export type VehiclePresetId = 'balanced' | 'sprinter' | 'bulldozer' | 'drifter'
 
 export const INPUT_MAP: KeyboardControlsEntry<ControlName>[] = [
@@ -15,7 +15,8 @@ export const INPUT_MAP: KeyboardControlsEntry<ControlName>[] = [
   { name: 'backward', keys: ['ArrowDown', 'KeyS'] },
   { name: 'left', keys: ['ArrowLeft', 'KeyA'] },
   { name: 'right', keys: ['ArrowRight', 'KeyD'] },
-  { name: 'restart', keys: ['KeyR', 'Space'] },
+  { name: 'jump', keys: ['Space'] },
+  { name: 'restart', keys: ['KeyR'] },
 ]
 
 export const DAMAGE_TIERS = {
@@ -72,6 +73,22 @@ export const VEHICLE_PHYSICS = {
   engineBrake: 4.5,
   rollingResistance: 0.35,
   aeroDrag: 0.01,
+  suspensionRideHeight: 0.72,
+  suspensionSpring: 24,
+  suspensionDamping: 9.5,
+  suspensionImpulseClamp: 16,
+  slopeAlignTorque: 2.3,
+  slopeAlignDamping: 0.78,
+  groundingSpeedThreshold: 2.4,
+  groundingHeightBias: 0.12,
+}
+
+export const JUMP_TUNING = {
+  impulse: 4.8,
+  cooldownSec: 0.85,
+  coyoteSec: 0.12,
+  antiSpamGuardSec: 0.14,
+  maxUpliftSpeed: 5.1,
 }
 
 export const DAMAGE_SPUTTER = {

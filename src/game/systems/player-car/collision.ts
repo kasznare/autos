@@ -9,6 +9,7 @@ type MutableRef<T> = { current: T }
 
 type CollisionEnterParams = {
   body: RapierRigidBody
+  otherBody: RapierRigidBody | null | undefined
   otherBodyName: string
   otherPosition?: { x: number; y: number; z: number } | null
   now: number
@@ -35,8 +36,23 @@ type CollisionEnterParams = {
   }) => void
 }
 
+const estimateOtherBodyMass = (otherBodyName: string, otherBody: RapierRigidBody | null | undefined) => {
+  const bodyMass = otherBody?.mass?.()
+  if (typeof bodyMass === 'number' && Number.isFinite(bodyMass) && bodyMass > 0) {
+    return bodyMass
+  }
+  if (otherBodyName.includes('traffic')) return 1.28
+  if (otherBodyName.includes('tree')) return 8
+  if (otherBodyName.includes('chunk')) return 0.12
+  if (otherBodyName.startsWith('hard-') || otherBodyName.startsWith('metal-')) return 9
+  if (otherBodyName.startsWith('medium-') || otherBodyName.startsWith('wood-')) return 1.1
+  if (otherBodyName.startsWith('soft-') || otherBodyName.startsWith('rubber-')) return 0.4
+  return Math.max(0.8, bodyMass ?? 1)
+}
+
 export const handlePlayerCollisionEnter = ({
   body,
+  otherBody,
   otherBodyName,
   otherPosition,
   now,
@@ -56,7 +72,13 @@ export const handlePlayerCollisionEnter = ({
   setPhysicsTelemetry,
 }: CollisionEnterParams) => {
   const velocity = body.linvel()
+  const otherVel = otherBody?.linvel?.() ?? { x: 0, y: 0, z: 0 }
+  const relVelX = velocity.x - otherVel.x
+  const relVelY = velocity.y - otherVel.y
+  const relVelZ = velocity.z - otherVel.z
   const planarSpeed = Math.hypot(velocity.x, velocity.z)
+  const relativePlanarSpeed = Math.hypot(relVelX, relVelZ)
+  const relativeSpeed = Math.hypot(relVelX, relVelY, relVelZ)
   const rotation = body.rotation()
   const yaw = Math.atan2(
     2 * (rotation.w * rotation.y + rotation.x * rotation.z),
@@ -64,9 +86,9 @@ export const handlePlayerCollisionEnter = ({
   )
   const forwardX = Math.sin(yaw)
   const forwardZ = Math.cos(yaw)
-  const speed = Math.max(0.001, planarSpeed)
-  const velocityDirX = velocity.x / speed
-  const velocityDirZ = velocity.z / speed
+  const speed = Math.max(0.001, relativePlanarSpeed)
+  const velocityDirX = relVelX / speed
+  const velocityDirZ = relVelZ / speed
   const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
   const verticalSpeed = Math.abs(velocity.y)
   const rightX = Math.cos(yaw)
@@ -79,7 +101,10 @@ export const handlePlayerCollisionEnter = ({
 
   const impact = evaluateImpactDamageV2({
     vehicleMass: Math.max(0.8, body.mass()),
+    otherMass: estimateOtherBodyMass(otherBodyName, otherBody),
     planarSpeed,
+    relativePlanarSpeed,
+    relativeSpeed,
     verticalSpeed,
     forwardAlignment,
     armorScale: armorTimerRef.current > 0 ? KID_TUNING.armorDamageScale : 1,

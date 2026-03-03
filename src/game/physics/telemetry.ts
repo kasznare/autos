@@ -5,6 +5,8 @@ export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 
   speedKph: 0,
   steeringDeg: 0,
   slipRatio: 0,
+  jumpState: 'grounded',
+  jumpCooldownRemaining: 0,
   latestImpactImpulse: 0,
   latestImpactTier: 'minor',
   latestImpactMaterial: 'rubber',

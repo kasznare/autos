@@ -304,6 +304,11 @@ body {
   font-size: 1.1rem;
 }
 
+.hud-card-warning {
+  border-color: rgba(255, 180, 108, 0.78);
+  box-shadow: 0 0 0 1px rgba(255, 180, 108, 0.3) inset;
+}
+
 .hud-card-compact {
   font-size: 0.95rem;
   padding: 0.26rem 0.72rem;
@@ -326,6 +331,8 @@ body {
 .battery-saver-picker {
   display: flex;
   gap: 0.3rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .battery-chip {

@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { useEffect } from 'react'
 import { CarModel } from '../../CarModel'
 import { MAP_LABELS, MAP_ORDER } from '../../maps'
+import type { RenderMode, RenderQualityTier } from '../../store/types'
 import { useGameStore } from '../../store'
 import { VehicleBuilder } from './VehicleBuilder'
 
@@ -51,12 +52,20 @@ export const GarageOverlay = ({
 }) => {
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
+  const renderMode = useGameStore((state) => state.renderMode)
+  const renderQualityTier = useGameStore((state) => state.renderQualityTier)
+  const renderWireframe = useGameStore((state) => state.renderWireframe)
   const setBatterySaverMode = useGameStore((state) => state.setBatterySaverMode)
+  const setRenderMode = useGameStore((state) => state.setRenderMode)
+  const setRenderQualityTier = useGameStore((state) => state.setRenderQualityTier)
+  const setRenderWireframe = useGameStore((state) => state.setRenderWireframe)
   const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
   const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
   const resetMapSetup = useGameStore((state) => state.resetMapSetup)
   const resetUiSetup = useGameStore((state) => state.resetUiSetup)
   const resetVehicleSetup = useGameStore((state) => state.resetVehicleSetup)
+  const renderModes: RenderMode[] = ['flat-debug', 'pretty']
+  const renderTiers: RenderQualityTier[] = ['low', 'medium', 'high', 'ultra']
 
   useEffect(() => {
     if (!isOpen) {
@@ -150,6 +159,53 @@ export const GarageOverlay = ({
                   </button>
                 </div>
               </div>
+
+              <div className="battery-saver-row">
+                <span className="battery-saver-label">Render Mode</span>
+                <div className="battery-saver-picker">
+                  {renderModes.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`battery-chip${renderMode === mode ? ' active' : ''}`}
+                      onClick={() => setRenderMode(mode)}
+                    >
+                      {mode === 'flat-debug' ? 'Flat Debug' : 'Pretty'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="battery-saver-row">
+                <span className="battery-saver-label">Render Tier</span>
+                <div className="battery-saver-picker">
+                  {renderTiers.map((tier) => (
+                    <button
+                      key={tier}
+                      type="button"
+                      className={`battery-chip${renderQualityTier === tier ? ' active' : ''}`}
+                      onClick={() => setRenderQualityTier(tier)}
+                    >
+                      {tier}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {renderMode === 'flat-debug' ? (
+                <div className="battery-saver-row">
+                  <span className="battery-saver-label">Wireframe</span>
+                  <div className="battery-saver-picker">
+                    <button
+                      type="button"
+                      className={`battery-chip${renderWireframe ? ' active' : ''}`}
+                      onClick={() => setRenderWireframe(!renderWireframe)}
+                    >
+                      {renderWireframe ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="map-picker">
                 {MAP_ORDER.map((mapId) => (

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import { MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
 
-type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'restart'
+type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart'
 
 const TouchButton = ({
   icon,
@@ -52,45 +52,23 @@ export const Hud = ({
   const score = useGameStore((state) => state.score)
   const bestScore = useGameStore((state) => state.bestScore)
   const speedKph = useGameStore((state) => state.speedKph)
+  const qualityTier = useGameStore((state) => state.qualityTier)
+  const renderPerf = useGameStore((state) => state.renderPerf)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const mission = useGameStore((state) => state.mission)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
+  const physicsTelemetry = useGameStore((state) => state.physicsTelemetry)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
-  const [fps, setFps] = useState(0)
-  const fpsFrameCountRef = useRef(0)
-  const fpsWindowStartRef = useRef(0)
-
   useEffect(() => {
     return () => {
       resetVirtualInput()
-    }
-  }, [])
-
-  useEffect(() => {
-    let rafId = 0
-    const loop = (timeMs: number) => {
-      if (fpsWindowStartRef.current === 0) {
-        fpsWindowStartRef.current = timeMs
-      }
-      fpsFrameCountRef.current += 1
-      const elapsedMs = timeMs - fpsWindowStartRef.current
-      if (elapsedMs >= 400) {
-        setFps(Math.round((fpsFrameCountRef.current * 1000) / elapsedMs))
-        fpsFrameCountRef.current = 0
-        fpsWindowStartRef.current = timeMs
-      }
-      rafId = window.requestAnimationFrame(loop)
-    }
-    rafId = window.requestAnimationFrame(loop)
-    return () => {
-      window.cancelAnimationFrame(rafId)
     }
   }, [])
 
@@ -114,7 +92,29 @@ export const Hud = ({
         </div>
         <div className="hud-telemetry-row">
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
-          <div className="hud-card hud-card-compact">FPS: {fps}</div>
+          <div className={`hud-card hud-card-compact${renderPerf.fps < 50 ? ' hud-card-warning' : ''}`}>FPS: {Math.round(renderPerf.fps)}</div>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className={`hud-card hud-card-compact${renderPerf.frameMsWorst > 20 ? ' hud-card-warning' : ''}`}>
+            Frame: {renderPerf.frameMsAvg > 0 ? renderPerf.frameMsAvg.toFixed(1) : '0.0'} ms
+          </div>
+          <div className="hud-card hud-card-compact">Worst: {renderPerf.frameMsWorst > 0 ? renderPerf.frameMsWorst.toFixed(1) : '0.0'} ms</div>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className={`hud-card hud-card-compact${renderPerf.drawCalls > 200 ? ' hud-card-warning' : ''}`}>Draws: {renderPerf.drawCalls}</div>
+          <div className={`hud-card hud-card-compact${renderPerf.triangles > 500000 ? ' hud-card-warning' : ''}`}>Tris: {(renderPerf.triangles / 1000).toFixed(0)}k</div>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">Tier: {qualityTier}</div>
+          <div className={`hud-card hud-card-compact${renderPerf.gpuHotspot !== 'none' ? ' hud-card-warning' : ''}`}>GPU: {renderPerf.gpuHotspot}</div>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">
+            Jump: {physicsTelemetry.jumpState === 'grounded' && physicsTelemetry.jumpCooldownRemaining <= 0.001 ? 'Ready' : `${Math.max(0, physicsTelemetry.jumpCooldownRemaining).toFixed(1)}s`} ({physicsTelemetry.jumpState})
+          </div>
+          <div className="hud-card hud-card-compact">
+            Hit: {physicsTelemetry.latestImpactTier} ({physicsTelemetry.latestImpactImpulse.toFixed(1)})
+          </div>
         </div>
         <div className="mission-card">
           <div className="mission-title">
@@ -131,7 +131,7 @@ export const Hud = ({
           <span className="multiplayer-state">Controller: {gamepadConnected ? 'Connected' : 'Not Connected'}</span>
         </div>
 
-        <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
+        <div className="instructions">Drive: WASD / Arrows • Jump: Space • Restart: R</div>
       </div>
       <div className="damage-wrap damage-wrap-center">
         <div className="damage-label">Damage: {damagePct}%</div>
@@ -141,6 +141,7 @@ export const Hud = ({
       </div>
       <div className="touch-controls">
         <div className="touch-row">
+          <TouchButton icon="⤒" ariaLabel="Jump" keyName="jump" active={keyboardInput.jump} />
           <TouchButton icon="▲" ariaLabel="Forward" keyName="forward" active={keyboardInput.forward} />
         </div>
         <div className="touch-row">
