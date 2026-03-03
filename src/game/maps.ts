@@ -135,22 +135,26 @@ export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
   if (map.shape === 'path') {
     const ridgeA = Math.abs(Math.sin(x * f * 1.6) * Math.cos(z * f * 1.2))
     const ridgeB = Math.abs(Math.sin((x - z) * f * 0.86))
-    const mountain = (ridgeA * 0.9 + ridgeB * 0.7) * map.terrainAmplitude * 1.05
+    const mountain = (ridgeA * 0.9 + ridgeB * 0.7) * map.terrainAmplitude * 0.96
     height += mountain
     const roadInfo = getPathRoadProximity(x, z, map.roadPath)
     const sideSlopeRange = map.roadWidth * 2.2
-    const sideSlopeFade = 1 - smoothStep(map.roadWidth * 0.45, sideSlopeRange, roadInfo.distance)
+    const laneCoreStart = map.roadWidth * 0.9
+    const laneCoreEnd = map.roadWidth * 1.9
+    const laneCoreBlend = 1 - smoothStep(laneCoreStart, laneCoreEnd, roadInfo.distance)
+    const sideSlopeFade = smoothStep(map.roadWidth * 0.95, sideSlopeRange, roadInfo.distance)
     const sideSlopeNorm = Math.max(-1, Math.min(1, roadInfo.signedDistance / Math.max(0.001, map.roadWidth * 0.9)))
-    const sideSlope = sideSlopeNorm * map.terrainAmplitude * 0.06 * sideSlopeFade
+    const sideSlope = sideSlopeNorm * map.terrainAmplitude * 0.045 * sideSlopeFade
     const roadBase =
       (Math.sin(x * f * 0.19) * 0.55 + Math.cos(z * f * 0.17) * 0.45 + Math.sin((x + z) * f * 0.12) * 0.35) *
       map.terrainAmplitude *
-      0.1 +
+      0.06 +
       sideSlope
-    const flattenStart = map.roadWidth * 0.68
-    const flattenEnd = map.roadWidth * 4.6
+    const flattenStart = map.roadWidth * 0.55
+    const flattenEnd = map.roadWidth * 5.2
     const blend = smoothStep(flattenStart, flattenEnd, roadInfo.distance)
-    height = roadBase + (height - roadBase) * blend
+    const flattened = roadBase + (height - roadBase) * blend
+    height = roadBase + (flattened - roadBase) * (1 - laneCoreBlend * 0.92)
   }
   return height
 }

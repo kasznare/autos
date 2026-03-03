@@ -66,6 +66,7 @@ export const Hud = ({
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
+  const mission = useGameStore((state) => state.mission)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
@@ -115,6 +116,17 @@ export const Hud = ({
         <div className="hud-telemetry-row">
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
           <div className="hud-card hud-card-compact">Steer: {steeringDeg >= 0 ? '+' : ''}{Math.round(steeringDeg)}°</div>
+        </div>
+        <div className="mission-card">
+          <div className="mission-title">
+            Mission: {mission.label}
+          </div>
+          <div className="mission-progress">
+            {Math.round(mission.progress)}/{mission.target} • Reward {mission.reward}
+          </div>
+          <div className="mission-track" role="progressbar" aria-valuemin={0} aria-valuemax={mission.target} aria-valuenow={mission.progress}>
+            <div className="mission-fill" style={{ width: `${Math.min(100, (mission.progress / Math.max(1, mission.target)) * 100)}%` }} />
+          </div>
         </div>
         <div className="battery-saver-row">
           <span className="battery-saver-label">Battery Saver</span>

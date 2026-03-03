@@ -344,12 +344,12 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const throttleFactor = sputterActiveRef.current && throttle > 0 ? DAMAGE_SPUTTER.throttleFactor : 1
     const effectiveThrottle = throttle * throttleFactor
 
-    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * profile.accelMult
-    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * profile.accelMult * 1.25
     let nextForwardSpeed = forwardSpeed
     const wantsForward = effectiveThrottle > 0.02
     const wantsBackward = effectiveThrottle < -0.02
     const throttleAbs = Math.min(1, Math.abs(effectiveThrottle))
+    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * profile.accelMult
+    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * profile.accelMult * 1.25
 
     if (wantsForward && nextForwardSpeed >= -0.15) {
       nextForwardSpeed += throttleAbs * forwardAccel * delta
@@ -376,7 +376,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * profile.reverseSpeedMult * 1.2
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
-    const gripLerp = Math.min(1, delta * (6.4 + Math.abs(nextForwardSpeed) * 0.45) * gripScale * surfaceConfig.gripFactor * profile.gripMult)
+    const gripLerp = Math.min(
+      1,
+      delta * (6.4 + Math.abs(nextForwardSpeed) * 0.45) * gripScale * surfaceConfig.gripFactor * profile.gripMult,
+    )
     const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
 
     const turnDirection = Number(input.left) - Number(input.right)
@@ -411,11 +414,12 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
     const yawError = normalizeAngleDelta(nextYaw - yaw)
     const yawRateError = targetYawRate - angVel.y
+
     body.applyTorqueImpulse(
       {
-        x: -angVel.x * 0.08,
+        x: -angVel.x * 0.14,
         y: yawError * (1.8 + Math.abs(nextForwardSpeed) * 0.32) + yawRateError * 0.9,
-        z: -angVel.z * 0.08,
+        z: -angVel.z * 0.14,
       },
       true,
     )
@@ -439,6 +443,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       },
       true,
     )
+
     const postVel = body.linvel()
     const nextVx = postVel.x
     const nextVz = postVel.z
@@ -592,6 +597,9 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         }
 
         const otherBodyName = payload.other.rigidBodyObject?.name ?? ''
+        if (otherBodyName.startsWith('terrain-')) {
+          return
+        }
         const material = getCollisionMaterial(otherBodyName)
         if (material === 'hard') {
           hardContactCountRef.current += 1
@@ -610,6 +618,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         const velocityDirX = velocity.x / speed
         const velocityDirZ = velocity.z / speed
         const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
+        const verticalSpeed = Math.abs(velocity.y)
+
+        if (material === 'soft' && planarSpeed < 7.2 && verticalSpeed < 2.4) {
+          return
+        }
 
         const damageDelta = getDamageForImpact(planarSpeed, material, forwardAlignment)
         const scaledDamage = Math.max(
@@ -639,7 +652,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         }
       }}
     >
-      <CuboidCollider args={[0.72, 0.38, 1.22]} />
+      <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
       <CarModel
         bodyColor={palette.body}
         accentColor={palette.accent}

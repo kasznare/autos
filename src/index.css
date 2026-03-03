@@ -99,6 +99,41 @@ body {
   gap: 0.45rem;
 }
 
+.mission-card {
+  margin-top: 0.42rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid #ffffff;
+  border-radius: 0.72rem;
+  padding: 0.38rem 0.48rem 0.42rem;
+}
+
+.mission-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #1f4f68;
+}
+
+.mission-progress {
+  margin-top: 0.08rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #326985;
+}
+
+.mission-track {
+  margin-top: 0.24rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(27, 91, 124, 0.2);
+}
+
+.mission-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #31bd62, #4fd1ff);
+  transition: width 180ms ease-out;
+}
+
 .hud-panel {
   align-self: flex-end;
   width: min(300px, 72vw);

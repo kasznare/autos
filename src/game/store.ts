@@ -7,6 +7,35 @@ import type { DriveInputState } from './keys'
 
 type GameStatus = 'running' | 'lost'
 type BatterySaverMode = 'auto' | 'on' | 'off'
+type MissionType = 'collect_stars' | 'collect_parts' | 'pass_gates' | 'clean_drive'
+
+export type ActiveMission = {
+  id: number
+  type: MissionType
+  label: string
+  target: number
+  progress: number
+  reward: number
+}
+
+const MISSION_TEMPLATES: Array<Omit<ActiveMission, 'id' | 'progress'>> = [
+  { type: 'collect_stars', label: 'Collect Stars', target: 5, reward: 90 },
+  { type: 'pass_gates', label: 'Drive Through Gates', target: 4, reward: 105 },
+  { type: 'collect_parts', label: 'Find Spare Parts', target: 3, reward: 120 },
+  { type: 'clean_drive', label: 'Clean Drive Time', target: 20, reward: 130 },
+]
+
+const buildMission = (index: number): ActiveMission => {
+  const template = MISSION_TEMPLATES[index % MISSION_TEMPLATES.length]
+  return {
+    id: index,
+    type: template.type,
+    label: template.label,
+    target: template.target,
+    reward: template.reward,
+    progress: 0,
+  }
+}
 
 type GameState = {
   damage: number
@@ -22,6 +51,7 @@ type GameState = {
   proceduralMapSeed: number
   selectedCarColor: string
   selectedCarProfile: CarProfileId
+  mission: ActiveMission
   gamepadConnected: boolean
   keyboardInput: DriveInputState
   hitFxToken: number
@@ -40,6 +70,8 @@ type GameState = {
   setGamepadConnected: (connected: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
+  advanceMission: (event: MissionType, amount?: number) => void
+  setMissionProgress: (event: MissionType, progress: number) => void
   restartRun: () => void
 }
 
@@ -57,6 +89,7 @@ export const useGameStore = create<GameState>((set) => ({
   proceduralMapSeed: 1,
   selectedCarColor: CAR_COLOR_OPTIONS[0],
   selectedCarProfile: 'steady',
+  mission: buildMission(0),
   gamepadConnected: false,
   keyboardInput: createInputState(),
   hitFxToken: 0,
@@ -120,6 +153,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      mission: buildMission(0),
       proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
     })),
   rerollProceduralMap: () =>
@@ -133,6 +167,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      mission: buildMission(0),
     })),
   setSelectedCarColor: (color) =>
     set((state) => ({
@@ -167,6 +202,59 @@ export const useGameStore = create<GameState>((set) => ({
       speedKph,
       steeringDeg,
     })),
+  advanceMission: (event, amount = 1) =>
+    set((state) => {
+      if (state.status === 'lost' || state.mission.type !== event) {
+        return state
+      }
+      const nextProgress = Math.min(state.mission.target, state.mission.progress + Math.max(0, amount))
+      if (nextProgress < state.mission.target) {
+        return {
+          ...state,
+          mission: { ...state.mission, progress: nextProgress },
+        }
+      }
+      const nextMission = buildMission(state.mission.id + 1)
+      const reward = state.mission.reward
+      const nextScore = state.score + reward
+      return {
+        ...state,
+        score: nextScore,
+        bestScore: Math.max(state.bestScore, nextScore),
+        mission: nextMission,
+        hitFxToken: state.hitFxToken + 1,
+        hitFxStrength: 0.45,
+        lastHitLabel: `Mission Complete! +${reward}`,
+      }
+    }),
+  setMissionProgress: (event, progress) =>
+    set((state) => {
+      if (state.status === 'lost' || state.mission.type !== event) {
+        return state
+      }
+      const clamped = Math.max(0, Math.min(state.mission.target, progress))
+      if (clamped === state.mission.progress) {
+        return state
+      }
+      if (clamped < state.mission.target) {
+        return {
+          ...state,
+          mission: { ...state.mission, progress: clamped },
+        }
+      }
+      const nextMission = buildMission(state.mission.id + 1)
+      const reward = state.mission.reward
+      const nextScore = state.score + reward
+      return {
+        ...state,
+        score: nextScore,
+        bestScore: Math.max(state.bestScore, nextScore),
+        mission: nextMission,
+        hitFxToken: state.hitFxToken + 1,
+        hitFxStrength: 0.45,
+        lastHitLabel: `Mission Complete! +${reward}`,
+      }
+    }),
   restartRun: () =>
     set((state) => ({
       ...state,
@@ -177,5 +265,6 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      mission: buildMission(0),
     })),
 }))

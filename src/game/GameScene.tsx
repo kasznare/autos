@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, Group, PlaneGeometry, RepeatWrapping } from 'three'
 import { CarModel } from './CarModel'
 import { TRACK_SIZE } from './config'
-import { getTrackMap, sampleTerrainHeight, type TrackMap } from './maps'
+import { getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
 import { createRoomChannel, isMultiplayerConfigured, makeClientId, type CarSnapshot, type RoomChannelHandle } from './multiplayer'
 import { PlayerCar } from './PlayerCar'
 import { useGameStore } from './store'
@@ -15,15 +15,106 @@ import { DESTRUCTIBLE_COLORS, DESTRUCTIBLE_SPAWN_POINTS, INITIAL_DESTRUCTIBLES, 
 const MIN_STARS = 5
 const MIN_REPAIRS = 3
 const MIN_PARTS = 2
+const TRAFFIC_CAR_COUNT = 4
+const CRITTER_COUNT = 8
+const CRITTER_BREAK_SPEED = 3.2
+const CRITTER_HIT_RADIUS = 1.05
+const CRITTER_HIT_CHECK_INTERVAL = 0.08
+const CRITTER_RESPAWN_SECONDS = 4.2
 const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
 const MIN_DISTANCE_FROM_PICKUP = 3.2
 const DESTRUCTIBLE_RESPAWN_SECONDS = 3.2
 const DESTRUCTIBLE_BREAK_SPEED = 6.5
+const TERRAIN_MESH_SEGMENTS = 280
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
   return x - Math.floor(x)
+}
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+
+const buildTrafficPath = (map: TrackMap): [number, number][] => {
+  if (map.shape === 'path' && map.roadPath.length >= 3) {
+    return map.roadPath
+  }
+  const mid = (map.outerHalf + map.innerHalf) * 0.5
+  return [
+    [-mid, -mid],
+    [mid, -mid],
+    [mid, mid],
+    [-mid, mid],
+  ]
+}
+
+const getLoopLength = (points: [number, number][]) => {
+  if (points.length < 2) return 1
+  let length = 0
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    length += Math.hypot(b[0] - a[0], b[1] - a[1])
+  }
+  return Math.max(1, length)
+}
+
+const sampleLoop = (points: [number, number][], tRaw: number) => {
+  if (points.length < 2) {
+    return { x: 0, z: 0, yaw: 0 }
+  }
+  const t = ((tRaw % 1) + 1) % 1
+  const total = getLoopLength(points)
+  let target = t * total
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    const segLen = Math.hypot(b[0] - a[0], b[1] - a[1])
+    if (target <= segLen) {
+      const alpha = clamp01(target / Math.max(0.0001, segLen))
+      const x = a[0] + (b[0] - a[0]) * alpha
+      const z = a[1] + (b[1] - a[1]) * alpha
+      const yaw = Math.atan2(b[0] - a[0], b[1] - a[1])
+      return { x, z, yaw }
+    }
+    target -= segLen
+  }
+  const a = points[points.length - 1]
+  const b = points[0]
+  return { x: a[0], z: a[1], yaw: Math.atan2(b[0] - a[0], b[1] - a[1]) }
+}
+
+const getClosestProgressOnLoop = (points: [number, number][], x: number, z: number) => {
+  if (points.length < 2) {
+    return { progress: 0, distance: Infinity }
+  }
+  const total = getLoopLength(points)
+  let walked = 0
+  let bestDistance = Infinity
+  let bestProgress = 0
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    const abx = b[0] - a[0]
+    const abz = b[1] - a[1]
+    const apx = x - a[0]
+    const apz = z - a[1]
+    const segLenSq = abx * abx + abz * abz
+    const segLen = Math.sqrt(segLenSq)
+    if (segLen <= 0.0001) {
+      continue
+    }
+    const t = clamp01((apx * abx + apz * abz) / segLenSq)
+    const cx = a[0] + abx * t
+    const cz = a[1] + abz * t
+    const dist = Math.hypot(x - cx, z - cz)
+    if (dist < bestDistance) {
+      bestDistance = dist
+      bestProgress = (walked + segLen * t) / total
+    }
+    walked += segLen
+  }
+  return { progress: ((bestProgress % 1) + 1) % 1, distance: bestDistance }
 }
 
 const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) => {
@@ -75,7 +166,7 @@ const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) => {
   }, [worldHalf])
 
   return (
-    <RigidBody type="fixed" colliders={false}>
+    <RigidBody type="fixed" colliders={false} name="terrain-ground-ring">
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[worldHalf * 2, worldHalf * 2]} />
         <meshStandardMaterial color="#4cb35f" map={groundTexture} roughness={0.95} />
@@ -200,7 +291,7 @@ const RoadPath = ({ map }: { map: TrackMap }) => {
 
   const roadGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const segments = 180
+    const segments = TERRAIN_MESH_SEGMENTS
     const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
@@ -230,28 +321,63 @@ const ProceduralGround = ({ map }: { map: TrackMap }) => {
     if (!ctx) {
       return null
     }
+    const worldSize = map.worldHalf * 2
+    const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
+    const drawClosedPath = () => {
+      map.roadPath.forEach((point, idx) => {
+        const x = toCanvas(point[0])
+        const y = toCanvas(point[1])
+        if (idx === 0) {
+          ctx.moveTo(x, y)
+          return
+        }
+        ctx.lineTo(x, y)
+      })
+      if (map.roadPath.length > 0) {
+        ctx.lineTo(toCanvas(map.roadPath[0][0]), toCanvas(map.roadPath[0][1]))
+      }
+    }
+
     ctx.fillStyle = '#4a9f57'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.fillStyle = '#5ab368'
-    for (let y = 0; y < canvas.height; y += 48) {
-      for (let x = 0; x < canvas.width; x += 48) {
-        if (((x + y) / 48) % 2 === 0) {
-          ctx.fillRect(x, y, 48, 48)
+    const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
+    baseGradient.addColorStop(0, 'rgba(89, 164, 98, 0.42)')
+    baseGradient.addColorStop(0.5, 'rgba(70, 140, 78, 0.22)')
+    baseGradient.addColorStop(1, 'rgba(101, 180, 112, 0.38)')
+    ctx.fillStyle = baseGradient
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    ctx.fillStyle = 'rgba(115, 186, 111, 0.14)'
+    for (let y = 0; y < canvas.height; y += 56) {
+      for (let x = 0; x < canvas.width; x += 56) {
+        if (((x + y) / 56) % 2 === 0) {
+          ctx.fillRect(x, y, 56, 56)
         }
       }
     }
-    for (let i = 0; i < 4200; i += 1) {
+
+    for (let i = 0; i < 2000; i += 1) {
+      const x = pseudoNoise(i, 101) * canvas.width
+      const y = pseudoNoise(i, 102) * canvas.height
+      const r = 8 + pseudoNoise(i, 103) * 24
+      ctx.fillStyle = pseudoNoise(i, 104) > 0.5 ? 'rgba(49, 117, 56, 0.07)' : 'rgba(130, 197, 118, 0.06)'
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    for (let i = 0; i < 5200; i += 1) {
       const x = pseudoNoise(i, 11) * canvas.width
       const y = pseudoNoise(i, 12) * canvas.height
       const len = 3 + pseudoNoise(i, 13) * 7
-      ctx.strokeStyle = pseudoNoise(i, 14) > 0.5 ? 'rgba(40, 108, 49, 0.19)' : 'rgba(137, 200, 114, 0.16)'
+      ctx.strokeStyle = pseudoNoise(i, 14) > 0.5 ? 'rgba(40, 108, 49, 0.2)' : 'rgba(137, 200, 114, 0.17)'
       ctx.lineWidth = 0.7 + pseudoNoise(i, 15) * 1.1
       ctx.beginPath()
       ctx.moveTo(x, y)
       ctx.lineTo(x + len * 0.35, y - len)
       ctx.stroke()
     }
-    for (let i = 0; i < 2200; i += 1) {
+    for (let i = 0; i < 2600; i += 1) {
       const x = pseudoNoise(i, 31) * canvas.width
       const y = pseudoNoise(i, 32) * canvas.height
       const r = 1 + pseudoNoise(i, 33) * 4
@@ -260,16 +386,40 @@ const ProceduralGround = ({ map }: { map: TrackMap }) => {
       ctx.arc(x, y, r, 0, Math.PI * 2)
       ctx.fill()
     }
+    for (let i = 0; i < 1200; i += 1) {
+      const x = pseudoNoise(i, 121) * canvas.width
+      const y = pseudoNoise(i, 122) * canvas.height
+      const r = 0.6 + pseudoNoise(i, 123) * 1.8
+      ctx.fillStyle = pseudoNoise(i, 124) > 0.5 ? 'rgba(176, 168, 143, 0.1)' : 'rgba(94, 89, 74, 0.08)'
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    const shoulderWidth = ((map.roadWidth * 1.8) / worldSize) * canvas.width
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = 'rgba(139, 120, 84, 0.24)'
+    ctx.lineWidth = shoulderWidth
+    ctx.beginPath()
+    drawClosedPath()
+    ctx.stroke()
+
+    ctx.strokeStyle = 'rgba(108, 141, 87, 0.26)'
+    ctx.lineWidth = shoulderWidth * 0.6
+    ctx.beginPath()
+    drawClosedPath()
+    ctx.stroke()
 
     const texture = new CanvasTexture(canvas)
     texture.wrapS = RepeatWrapping
     texture.wrapT = RepeatWrapping
     return texture
-  }, [])
+  }, [map.roadPath, map.roadWidth, map.worldHalf])
 
   const terrainGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const segments = 180
+    const segments = TERRAIN_MESH_SEGMENTS
     const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
@@ -295,9 +445,9 @@ const ProceduralGround = ({ map }: { map: TrackMap }) => {
   }, [terrainGeometry])
 
   return (
-    <RigidBody type="fixed" colliders={false}>
+    <RigidBody type="fixed" colliders={false} name="terrain-ground-procedural">
       <mesh receiveShadow geometry={terrainGeometry}>
-        <meshStandardMaterial map={terrainTexture} roughness={0.95} />
+        <meshStandardMaterial map={terrainTexture} roughness={0.9} metalness={0.04} />
       </mesh>
       {terrainColliderArgs ? <TrimeshCollider args={terrainColliderArgs} /> : null}
     </RigidBody>
@@ -409,6 +559,240 @@ const Trees = ({
     ))}
   </group>
 )
+
+const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) => {
+  const details = useMemo(() => {
+    const out: Array<{ id: string; type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
+    const maxItems = map.shape === 'path' ? 180 : 70
+    const half = map.worldHalf - 4
+    for (let i = 0; i < 900 && out.length < maxItems; i += 1) {
+      const nx = pseudoNoise(seed + i, 201) * 2 - 1
+      const nz = pseudoNoise(seed + i, 202) * 2 - 1
+      const x = nx * half
+      const z = nz * half
+      if (isPointOnRoad(map, x, z)) {
+        continue
+      }
+      const type = pseudoNoise(seed + i, 203) > 0.62 ? 'rock' : 'bush'
+      const scale = type === 'rock' ? 0.45 + pseudoNoise(seed + i, 204) * 0.95 : 0.4 + pseudoNoise(seed + i, 205) * 1.05
+      const y = sampleTerrainHeight(map, x, z)
+      out.push({
+        id: `detail-${seed}-${out.length}`,
+        type,
+        position: [x, y + 0.05, z],
+        scale,
+      })
+    }
+    return out
+  }, [map, seed])
+
+  return (
+    <group>
+      {details.map((item) =>
+        item.type === 'rock' ? (
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow receiveShadow>
+            <dodecahedronGeometry args={[0.35, 0]} />
+            <meshStandardMaterial color="#7c8374" roughness={0.93} />
+          </mesh>
+        ) : (
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow>
+            <sphereGeometry args={[0.42, 8, 7]} />
+            <meshStandardMaterial color="#4d9f58" roughness={0.88} />
+          </mesh>
+        ),
+      )}
+    </group>
+  )
+}
+
+const TrafficCars = ({
+  map,
+  lowPowerMode,
+  restartToken,
+  playerPositionRef,
+}: {
+  map: TrackMap
+  lowPowerMode: boolean
+  restartToken: number
+  playerPositionRef: { current: [number, number, number] }
+}) => {
+  const path = useMemo(() => buildTrafficPath(map), [map])
+  const loopLength = useMemo(() => getLoopLength(path), [path])
+  const carRefs = useRef<Array<RapierRigidBody | null>>([])
+  const progressRefs = useRef<number[]>([])
+
+  useEffect(() => {
+    progressRefs.current = Array.from({ length: TRAFFIC_CAR_COUNT }, (_, idx) => idx / TRAFFIC_CAR_COUNT)
+  }, [restartToken, map.id])
+
+  useFrame((_, delta) => {
+    const playerPos = playerPositionRef.current
+    const playerLane = getClosestProgressOnLoop(path, playerPos[0], playerPos[2])
+    const playerOnSameRoad = isPointOnRoad(map, playerPos[0], playerPos[2]) && playerLane.distance <= map.roadWidth * 0.6
+    const stopGapMeters = 7.2
+    const cautionGapMeters = 18
+
+    for (let i = 0; i < TRAFFIC_CAR_COUNT; i += 1) {
+      const body = carRefs.current[i]
+      if (!body) continue
+      const baseSpeedMps = 5.8 + (i % 3) * 0.8
+      let speedScale = 1
+      const carProgress = progressRefs.current[i] ?? i / TRAFFIC_CAR_COUNT
+      if (playerOnSameRoad) {
+        const gapFraction = ((playerLane.progress - carProgress) % 1 + 1) % 1
+        const gapMeters = gapFraction * loopLength
+        if (gapMeters < cautionGapMeters) {
+          const t = clamp01((gapMeters - stopGapMeters) / Math.max(0.001, cautionGapMeters - stopGapMeters))
+          speedScale = t * t
+        }
+      }
+      const speedMps = baseSpeedMps * speedScale
+      const advance = (speedMps * delta) / loopLength
+      progressRefs.current[i] = (carProgress + advance) % 1
+      const sample = sampleLoop(path, progressRefs.current[i])
+      const y = sampleTerrainHeight(map, sample.x, sample.z) + 0.62
+      body.setNextKinematicTranslation({ x: sample.x, y, z: sample.z })
+      body.setNextKinematicRotation({ x: 0, y: Math.sin(sample.yaw / 2), z: 0, w: Math.cos(sample.yaw / 2) })
+    }
+  })
+
+  return (
+    <group>
+      {Array.from({ length: TRAFFIC_CAR_COUNT }).map((_, idx) => {
+        const sample = sampleLoop(path, idx / TRAFFIC_CAR_COUNT)
+        const y = sampleTerrainHeight(map, sample.x, sample.z) + 0.62
+        const color = idx % 2 === 0 ? '#6ea9ff' : idx % 3 === 0 ? '#f2b34d' : '#92d38a'
+        return (
+          <RigidBody
+            key={`traffic-${idx}-${restartToken}-${map.id}`}
+            ref={(el) => {
+              carRefs.current[idx] = el
+            }}
+            type="kinematicPosition"
+            colliders={false}
+            position={[sample.x, y, sample.z]}
+            name={`medium-traffic-${idx}`}
+          >
+            <CarModel bodyColor={color} accentColor="#f1f5ff" damage={0} lowPowerMode={lowPowerMode} showTrail={false} />
+            <CuboidCollider args={[0.48, 0.26, 0.9]} position={[0, 0.26, 0]} />
+          </RigidBody>
+        )
+      })}
+    </group>
+  )
+}
+
+type RuntimeCritter = {
+  id: string
+  home: [number, number]
+  speed: number
+  radius: number
+  phase: number
+  headingOffset: number
+  state: 'alive' | 'broken'
+  position: [number, number, number]
+  respawnAt: number | null
+  burstSeed: number
+}
+
+const createCritters = (map: TrackMap, seed: number): RuntimeCritter[] => {
+  const result: RuntimeCritter[] = []
+  const half = map.worldHalf - 7
+  for (let i = 0; i < 1200 && result.length < CRITTER_COUNT; i += 1) {
+    const x = (pseudoNoise(seed + i, 301) * 2 - 1) * half
+    const z = (pseudoNoise(seed + i, 302) * 2 - 1) * half
+    if (isPointOnRoad(map, x, z)) {
+      continue
+    }
+    const y = sampleTerrainHeight(map, x, z) + 0.38
+    result.push({
+      id: `critter-${seed}-${result.length}`,
+      home: [x, z],
+      speed: 0.7 + pseudoNoise(seed + i, 303) * 0.8,
+      radius: 1 + pseudoNoise(seed + i, 304) * 2.6,
+      phase: pseudoNoise(seed + i, 305) * Math.PI * 2,
+      headingOffset: pseudoNoise(seed + i, 306) * 1.6,
+      state: 'alive',
+      position: [x, y, z],
+      respawnAt: null,
+      burstSeed: i,
+    })
+  }
+  return result
+}
+
+const ForestCritter = ({
+  critter,
+  map,
+  onBreak,
+}: {
+  critter: RuntimeCritter
+  map: TrackMap
+  onBreak: (id: string, position: [number, number, number]) => void
+}) => {
+  const bodyRef = useRef<RapierRigidBody | null>(null)
+
+  useFrame(({ clock }) => {
+    if (critter.state !== 'alive') return
+    const body = bodyRef.current
+    if (!body) return
+    const t = clock.elapsedTime
+    const wobble = Math.sin(t * critter.speed + critter.phase)
+    const sway = Math.cos(t * critter.speed * 0.8 + critter.phase + critter.headingOffset)
+    const x = critter.home[0] + wobble * critter.radius
+    const z = critter.home[1] + sway * critter.radius * 0.78
+    const y = sampleTerrainHeight(map, x, z) + 0.38
+    body.setNextKinematicTranslation({ x, y, z })
+  })
+
+  if (critter.state === 'broken') {
+    return <BrokenDestructible id={critter.id} position={critter.position} color="#c07e43" burstSeed={critter.burstSeed} />
+  }
+  return (
+    <RigidBody
+      ref={bodyRef}
+      type="kinematicPosition"
+      colliders={false}
+      position={critter.position}
+      name={`medium-${critter.id}`}
+      onCollisionEnter={(payload) => {
+        const otherName = payload.other.rigidBodyObject?.name ?? ''
+        if (!otherName.startsWith('player-car')) {
+          return
+        }
+        const v = payload.other.rigidBody?.linvel?.()
+        const speed = v ? Math.hypot(v.x, v.z) : 0
+        if (speed >= CRITTER_BREAK_SPEED) {
+          const p = bodyRef.current?.translation?.()
+          const hitPos: [number, number, number] = p
+            ? [p.x, p.y, p.z]
+            : [critter.position[0], critter.position[1], critter.position[2]]
+          onBreak(critter.id, hitPos)
+        }
+      }}
+    >
+      <group>
+        <mesh castShadow position={[0, 0.25, 0]}>
+          <capsuleGeometry args={[0.23, 0.3, 4, 8]} />
+          <meshStandardMaterial color="#b8864e" roughness={0.85} />
+        </mesh>
+        <mesh castShadow position={[0, 0.57, 0.2]}>
+          <sphereGeometry args={[0.18, 8, 8]} />
+          <meshStandardMaterial color="#d6b082" roughness={0.8} />
+        </mesh>
+        <mesh castShadow position={[-0.13, 0.58, 0.29]}>
+          <sphereGeometry args={[0.06, 7, 7]} />
+          <meshStandardMaterial color="#35281e" roughness={0.9} />
+        </mesh>
+        <mesh castShadow position={[0.13, 0.58, 0.29]}>
+          <sphereGeometry args={[0.06, 7, 7]} />
+          <meshStandardMaterial color="#35281e" roughness={0.9} />
+        </mesh>
+      </group>
+      <CuboidCollider args={[0.23, 0.28, 0.28]} position={[0, 0.3, 0]} />
+    </RigidBody>
+  )
+}
 
 const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
   <RigidBody type="fixed" colliders={false} name={`${obstacle.material}-${obstacle.id}`}>
@@ -700,12 +1084,15 @@ export const GameScene = ({
   isRoomHost?: boolean
 }) => {
   const damage = useGameStore((state) => state.damage)
+  const speedKph = useGameStore((state) => state.speedKph)
   const status = useGameStore((state) => state.status)
   const restartToken = useGameStore((state) => state.restartToken)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
   const selectedCarColor = useGameStore((state) => state.selectedCarColor)
   const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const advanceMission = useGameStore((state) => state.advanceMission)
+  const setMissionProgress = useGameStore((state) => state.setMissionProgress)
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const activeStaticObstacles = useMemo(
     () => (map.sourceId === 'procedural' ? [] : STATIC_OBSTACLES),
@@ -726,6 +1113,7 @@ export const GameScene = ({
       burstSeed: index,
     })),
   )
+  const [critters, setCritters] = useState<RuntimeCritter[]>(() => createCritters(map, proceduralMapSeed))
 
   const playerPositionRef = useRef<[number, number, number]>(map.startPosition)
   const spawnTimerRef = useRef(0)
@@ -737,10 +1125,34 @@ export const GameScene = ({
   const sendTimerRef = useRef(0)
   const staleTimerRef = useRef(0)
   const worldSyncTimerRef = useRef(0)
+  const critterRespawnTimerRef = useRef(0)
+  const critterHitCheckTimerRef = useRef(0)
+  const critterResetKeyRef = useRef(`${map.id}-${proceduralMapSeed}-${restartToken}`)
+  const pickupsRef = useRef<Pickup[]>(INITIAL_PICKUPS)
+  const gateInsideRef = useRef<boolean[]>(Array.from({ length: map.gates.length }, () => false))
+  const prevDamageRef = useRef(damage)
+  const cleanDriveSecondsRef = useRef(0)
+  const missionTickTimerRef = useRef(0)
   const headingRef = useRef(map.startYaw)
   const lastHeadingPosRef = useRef<[number, number, number]>(map.startPosition)
   const multiplayerEnabled = Boolean(roomId && isMultiplayerConfigured())
   const guestMode = multiplayerEnabled && !isRoomHost
+
+  const breakCritter = useCallback((id: string, position: [number, number, number]) => {
+    setCritters((state) =>
+      state.map((item) =>
+        item.id === id && item.state === 'alive'
+          ? {
+              ...item,
+              state: 'broken' as const,
+              respawnAt: performance.now() / 1000 + CRITTER_RESPAWN_SECONDS,
+              position,
+              burstSeed: item.burstSeed + 1,
+            }
+          : item,
+      ),
+    )
+  }, [])
 
   const applyPickupCollect = useCallback((pickupId: string) => {
     setPickups((state) => state.filter((pickup) => pickup.id !== pickupId))
@@ -748,12 +1160,19 @@ export const GameScene = ({
 
   const collectPickup = useCallback(
     (pickupId: string) => {
+      const picked = pickupsRef.current.find((pickup) => pickup.id === pickupId)
       applyPickupCollect(pickupId)
+      if (picked?.type === 'star') {
+        advanceMission('collect_stars', 1)
+      }
+      if (picked?.type === 'part') {
+        advanceMission('collect_parts', 1)
+      }
       if (channelRef.current) {
         channelRef.current.sendPickupCollect({ pickupId })
       }
     },
-    [applyPickupCollect],
+    [advanceMission, applyPickupCollect],
   )
 
   const updatePlayerPosition = useCallback((position: [number, number, number]) => {
@@ -793,6 +1212,10 @@ export const GameScene = ({
     },
     [applyBreakDestructible],
   )
+
+  useEffect(() => {
+    pickupsRef.current = pickups
+  }, [pickups])
 
   useEffect(() => {
     if (!roomId || !isMultiplayerConfigured()) {
@@ -846,6 +1269,12 @@ export const GameScene = ({
   }, [applyBreakDestructible, applyPickupCollect, guestMode, roomId])
 
   useFrame((_, delta) => {
+    const critterResetKey = `${map.id}-${proceduralMapSeed}-${restartToken}`
+    if (critterResetKeyRef.current !== critterResetKey) {
+      critterResetKeyRef.current = critterResetKey
+      setCritters(createCritters(map, proceduralMapSeed))
+      critterRespawnTimerRef.current = 0
+    }
     if (seenRestartTokenRef.current !== restartToken) {
       seenRestartTokenRef.current = restartToken
       spawnTimerRef.current = 0
@@ -853,10 +1282,17 @@ export const GameScene = ({
       sendTimerRef.current = 0
       staleTimerRef.current = 0
       worldSyncTimerRef.current = 0
+      critterRespawnTimerRef.current = 0
+      critterHitCheckTimerRef.current = 0
+      missionTickTimerRef.current = 0
+      cleanDriveSecondsRef.current = 0
+      prevDamageRef.current = 0
+      gateInsideRef.current = Array.from({ length: map.gates.length }, () => false)
       playerPositionRef.current = map.startPosition
       lastHeadingPosRef.current = map.startPosition
       headingRef.current = map.startYaw
       setPickups([...INITIAL_PICKUPS])
+      pickupsRef.current = INITIAL_PICKUPS
       destructibleSeedRef.current = 0
       setDestructibles(
         INITIAL_DESTRUCTIBLES.map((item, index) => ({
@@ -866,11 +1302,38 @@ export const GameScene = ({
           burstSeed: index,
         })),
       )
+      setCritters(createCritters(map, proceduralMapSeed))
       return
     }
 
     if (status !== 'running') {
       return
+    }
+
+    if (damage > prevDamageRef.current) {
+      cleanDriveSecondsRef.current = 0
+      setMissionProgress('clean_drive', 0)
+    }
+    prevDamageRef.current = damage
+
+    missionTickTimerRef.current += delta
+    if (missionTickTimerRef.current >= 0.15) {
+      missionTickTimerRef.current = 0
+      if (speedKph > 4) {
+        cleanDriveSecondsRef.current += 0.15
+        setMissionProgress('clean_drive', cleanDriveSecondsRef.current)
+      }
+    }
+
+    for (let i = 0; i < map.gates.length; i += 1) {
+      const gate = map.gates[i]
+      const dx = playerPositionRef.current[0] - gate.position[0]
+      const dz = playerPositionRef.current[2] - gate.position[2]
+      const inside = Math.hypot(dx, dz) <= 3
+      if (inside && !gateInsideRef.current[i]) {
+        advanceMission('pass_gates', 1)
+      }
+      gateInsideRef.current[i] = inside
     }
 
     if (channelRef.current) {
@@ -919,6 +1382,74 @@ export const GameScene = ({
 
     if (guestMode) {
       return
+    }
+
+    critterHitCheckTimerRef.current += delta
+    if (critterHitCheckTimerRef.current >= CRITTER_HIT_CHECK_INTERVAL) {
+      critterHitCheckTimerRef.current = 0
+      const impactSpeedThresholdKph = CRITTER_BREAK_SPEED * 3.6 * 0.75
+      if (speedKph >= impactSpeedThresholdKph) {
+        const px = playerPositionRef.current[0]
+        const py = playerPositionRef.current[1]
+        const pz = playerPositionRef.current[2]
+        const hitRadiusSq = CRITTER_HIT_RADIUS * CRITTER_HIT_RADIUS
+        const hitIds: string[] = []
+        const hitPositions: Record<string, [number, number, number]> = {}
+        for (const critter of critters) {
+          if (critter.state !== 'alive') {
+            continue
+          }
+          const dx = px - critter.position[0]
+          const dz = pz - critter.position[2]
+          const distSq = dx * dx + dz * dz
+          if (distSq > hitRadiusSq) {
+            continue
+          }
+          if (Math.abs(py - critter.position[1]) > 1) {
+            continue
+          }
+          hitIds.push(critter.id)
+          hitPositions[critter.id] = [critter.position[0], critter.position[1], critter.position[2]]
+        }
+        if (hitIds.length > 0) {
+          setCritters((state) =>
+            state.map((item) =>
+              hitIds.includes(item.id) && item.state === 'alive'
+                ? {
+                    ...item,
+                    state: 'broken' as const,
+                    respawnAt: performance.now() / 1000 + CRITTER_RESPAWN_SECONDS,
+                    position: hitPositions[item.id] ?? item.position,
+                    burstSeed: item.burstSeed + 1,
+                  }
+                : item,
+            ),
+          )
+        }
+      }
+    }
+
+    critterRespawnTimerRef.current += delta
+    if (critterRespawnTimerRef.current >= 0.2) {
+      critterRespawnTimerRef.current = 0
+      setCritters((state) => {
+        const nowSec = performance.now() / 1000
+        let changed = false
+        const next = state.map((item) => {
+          if (item.state === 'broken' && item.respawnAt !== null && item.respawnAt <= nowSec) {
+            changed = true
+            const y = sampleTerrainHeight(map, item.home[0], item.home[1]) + 0.38
+            return {
+              ...item,
+              state: 'alive' as const,
+              respawnAt: null,
+              position: [item.home[0], y, item.home[1]] as [number, number, number],
+            }
+          }
+          return item
+        })
+        return changed ? next : state
+      })
     }
 
     spawnTimerRef.current += delta
@@ -1042,7 +1573,11 @@ export const GameScene = ({
       )}
       <CheckpointGates gates={map.gates} />
       {map.shape === 'path' ? <RoadPath map={map} /> : null}
+      <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} />
       <Trees trees={map.trees} map={map} />
+      {map.shape === 'path' ? (
+        <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} />
+      ) : null}
       {activeStaticObstacles.map((obstacle) => (
         <StaticObstacle obstacle={obstacle} key={obstacle.id} />
       ))}
@@ -1059,6 +1594,11 @@ export const GameScene = ({
       {pickups.map((pickup) => (
         <PickupItem pickup={pickup} lowPowerMode={lowPowerMode} key={pickup.id} />
       ))}
+      {map.shape === 'path'
+        ? critters.map((critter) => (
+            <ForestCritter key={`${critter.id}-${critter.state}-${critter.burstSeed}`} critter={critter} map={map} onBreak={breakCritter} />
+          ))
+        : null}
       {Object.values(remoteCars).map((car) => (
         <RemoteCar key={car.id} car={car} lowPowerMode={lowPowerMode} />
       ))}
