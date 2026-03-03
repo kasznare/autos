@@ -37,23 +37,34 @@ export const TrafficCars = ({
   lowPowerMode,
   restartToken,
   playerPositionRef,
+  updateHz,
 }: {
   map: TrackMap
   lowPowerMode: boolean
   restartToken: number
   playerPositionRef: { current: [number, number, number] }
+  updateHz: number
 }) => {
   const render = useRenderSettings()
   const path = useMemo(() => buildTrafficPath(map), [map])
   const loopLength = useMemo(() => getLoopLength(path), [path])
   const carRefs = useRef<Array<RapierRigidBody | null>>([])
   const progressRefs = useRef<number[]>([])
+  const stepTimerRef = useRef(0)
 
   useEffect(() => {
     progressRefs.current = Array.from({ length: TRAFFIC_CAR_COUNT }, (_, idx) => idx / TRAFFIC_CAR_COUNT)
   }, [restartToken, map.id])
 
   useFrame((_, delta) => {
+    stepTimerRef.current += delta
+    const updateStep = 1 / Math.max(10, updateHz)
+    if (stepTimerRef.current < updateStep) {
+      return
+    }
+    const simDelta = stepTimerRef.current
+    stepTimerRef.current = 0
+
     const playerPos = playerPositionRef.current
     const playerLane = getClosestProgressOnLoop(path, playerPos[0], playerPos[2])
     const playerOnSameRoad = isPlayerOnTrafficPath(map, playerPos[0], playerPos[2], playerLane.distance)
@@ -75,7 +86,7 @@ export const TrafficCars = ({
         }
       }
       const speedMps = baseSpeedMps * speedScale
-      const advance = (speedMps * delta) / loopLength
+      const advance = (speedMps * simDelta) / loopLength
       progressRefs.current[i] = (carProgress + advance) % 1
       const sample = sampleLoop(path, progressRefs.current[i])
       const y = sampleTerrainHeight(map, sample.x, sample.z) + 0.62
@@ -181,18 +192,37 @@ export const ForestCritter = ({
   critter,
   map,
   onBreak,
+  playerPositionRef,
+  updateHz,
+  cullDistance,
 }: {
   critter: RuntimeCritter
   map: TrackMap
   onBreak: (id: string, position: [number, number, number]) => void
+  playerPositionRef: { current: [number, number, number] }
+  updateHz: number
+  cullDistance: number
 }) => {
   const render = useRenderSettings()
   const bodyRef = useRef<RapierRigidBody | null>(null)
+  const stepTimerRef = useRef(0)
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
     if (critter.state !== 'alive') return
+    stepTimerRef.current += delta
+    const updateStep = 1 / Math.max(8, updateHz)
+    if (stepTimerRef.current < updateStep) {
+      return
+    }
+    stepTimerRef.current = 0
     const body = bodyRef.current
     if (!body) return
+    const player = playerPositionRef.current
+    const dxp = player[0] - critter.position[0]
+    const dzp = player[2] - critter.position[2]
+    if (dxp * dxp + dzp * dzp > cullDistance * cullDistance) {
+      return
+    }
     const t = clock.elapsedTime
     const wobble = Math.sin(t * critter.speed + critter.phase)
     const sway = Math.cos(t * critter.speed * 0.8 + critter.phase + critter.headingOffset)

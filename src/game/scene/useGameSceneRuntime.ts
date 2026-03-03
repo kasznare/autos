@@ -320,7 +320,7 @@ export const useGameSceneRuntime = ({
         const py = playerPositionRef.current[1]
         const pz = playerPositionRef.current[2]
         const hitRadiusSq = critterRules.hitRadius * critterRules.hitRadius
-        const hitIds: string[] = []
+        const hitIds = new Set<string>()
         const hitPositions: Record<string, [number, number, number]> = {}
         for (const critter of critters) {
           if (critter.state !== 'alive') {
@@ -335,13 +335,13 @@ export const useGameSceneRuntime = ({
           if (Math.abs(py - critter.position[1]) > 1) {
             continue
           }
-          hitIds.push(critter.id)
+          hitIds.add(critter.id)
           hitPositions[critter.id] = [critter.position[0], critter.position[1], critter.position[2]]
         }
-        if (hitIds.length > 0) {
+        if (hitIds.size > 0) {
           setCritters((state) =>
             state.map((item) =>
-              hitIds.includes(item.id) && item.state === 'alive'
+              hitIds.has(item.id) && item.state === 'alive'
                 ? {
                     ...item,
                     state: 'broken' as const,
