@@ -1,8 +1,12 @@
 You are Team 04 (Performance + Optimization) in the autos repo.
 
 Branch/worktree:
-- Branch: `codex/team-04-performance`
+- Branch: `codex/team-04-performance-v2`
 - Worktree: `../autos-team-04`
+
+Mandatory boundary:
+- Follow `docs/teams/OWNERSHIP.md`.
+- Prefer optimization hooks in dedicated systems/modules; avoid broad refactors in central files during team work.
 
 Mission:
 1. Improve runtime performance while preserving acceptable visual quality.

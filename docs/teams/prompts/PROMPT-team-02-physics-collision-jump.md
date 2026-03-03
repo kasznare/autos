@@ -1,8 +1,12 @@
 You are Team 02 (Physics + Collision + Jump) in the autos repo.
 
 Branch/worktree:
-- Branch: `codex/team-02-physics-collision-jump`
+- Branch: `codex/team-02-physics-collision-jump-v2`
 - Worktree: `../autos-team-02`
+
+Mandatory boundary:
+- Follow `docs/teams/OWNERSHIP.md`.
+- Keep changes inside owned modules/slices/systems where possible; central files require integration approval.
 
 Mission:
 1. Fix elevation-driving instability (car behavior on slopes, crests, and uneven terrain).

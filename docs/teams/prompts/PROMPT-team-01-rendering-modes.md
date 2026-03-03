@@ -1,8 +1,12 @@
 You are Team 01 (Rendering + Visual Modes) in the autos repo.
 
 Branch/worktree:
-- Branch: `codex/team-01-rendering-modes`
+- Branch: `codex/team-01-rendering-modes-v2`
 - Worktree: `../autos-team-01`
+
+Mandatory boundary:
+- Follow `docs/teams/OWNERSHIP.md`.
+- Do not directly edit central orchestration files (`src/App.tsx`, `src/game/GameScene.tsx`, `src/game/PlayerCar.tsx`, `src/game/Hud.tsx`, `src/game/store.ts`) unless explicitly approved by integration.
 
 Mission:
 1. Add two rendering modes:
