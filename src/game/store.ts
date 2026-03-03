@@ -1,13 +1,20 @@
 import { create } from 'zustand'
-import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
-import type { CarProfileId } from './config'
+import { DEFAULT_VEHICLE_PRESET_ID, VEHICLE_PRESETS } from './config'
+import { evaluateVehicleSpec, sanitizeVehicleSpec, toVehiclePhysicsTuning } from './physics/vehicleAdapter'
 import { createInputState } from './keys'
-import type { MapId } from './maps'
 import type { DriveInputState } from './keys'
+import type { MapId } from './maps'
+import { createInitialPhysicsDebugTelemetryV2 } from './physics'
+import type { PhysicsDebugTelemetryV2 } from './types'
+import type { SavedVehicleBuild, VehiclePhysicsTuning, VehicleSpec, VehicleSpecEvaluation } from './types'
 
 type GameStatus = 'running' | 'lost'
 type BatterySaverMode = 'auto' | 'on' | 'off'
 type MissionType = 'collect_stars' | 'collect_parts' | 'pass_gates' | 'clean_drive'
+
+const MAX_DAMAGE = 100
+const BUILD_STORAGE_KEY = 'autos.vehicleBuilds.v1'
+const ACTIVE_BUILD_KEY = 'autos.activeBuild.v1'
 
 export type ActiveMission = {
   id: number
@@ -37,6 +44,56 @@ const buildMission = (index: number): ActiveMission => {
   }
 }
 
+const safeParse = <T,>(value: string | null): T | null => {
+  if (!value) {
+    return null
+  }
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
+}
+
+const getInitialVehicleSpec = (): VehicleSpec => {
+  if (typeof window === 'undefined') {
+    return sanitizeVehicleSpec(VEHICLE_PRESETS[DEFAULT_VEHICLE_PRESET_ID])
+  }
+  const parsed = safeParse<VehicleSpec>(window.localStorage.getItem(ACTIVE_BUILD_KEY))
+  if (!parsed) {
+    return sanitizeVehicleSpec(VEHICLE_PRESETS[DEFAULT_VEHICLE_PRESET_ID])
+  }
+  return sanitizeVehicleSpec(parsed)
+}
+
+const getInitialSavedBuilds = (): SavedVehicleBuild[] => {
+  if (typeof window === 'undefined') {
+    return []
+  }
+  const parsed = safeParse<SavedVehicleBuild[]>(window.localStorage.getItem(BUILD_STORAGE_KEY))
+  if (!Array.isArray(parsed)) {
+    return []
+  }
+
+  return parsed
+    .filter((entry) => Boolean(entry && typeof entry.id === 'string' && typeof entry.createdAt === 'string' && entry.spec))
+    .map((entry) => ({ ...entry, spec: sanitizeVehicleSpec(entry.spec) }))
+}
+
+const persistBuilds = (builds: SavedVehicleBuild[]) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(BUILD_STORAGE_KEY, JSON.stringify(builds))
+}
+
+const persistActiveSpec = (spec: VehicleSpec) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(ACTIVE_BUILD_KEY, JSON.stringify(spec))
+}
+
 type GameState = {
   damage: number
   score: number
@@ -49,14 +106,18 @@ type GameState = {
   batterySaverMode: BatterySaverMode
   selectedMapId: MapId
   proceduralMapSeed: number
+  vehicleSpec: VehicleSpec
+  vehicleSpecEvaluation: VehicleSpecEvaluation
+  vehiclePhysicsTuning: VehiclePhysicsTuning
   selectedCarColor: string
-  selectedCarProfile: CarProfileId
   mission: ActiveMission
   gamepadConnected: boolean
   keyboardInput: DriveInputState
+  savedBuilds: SavedVehicleBuild[]
   hitFxToken: number
   hitFxStrength: number
   lastHitLabel: string
+  physicsTelemetry: PhysicsDebugTelemetryV2
   addDamage: (amount: number) => void
   addScore: (amount: number) => void
   repair: (amount: number) => void
@@ -65,17 +126,24 @@ type GameState = {
   setSelectedMapId: (mapId: MapId) => void
   rerollProceduralMap: () => void
   setSelectedCarColor: (color: string) => void
-  setSelectedCarProfile: (profile: CarProfileId) => void
+  setVehicleSpec: (vehicleSpec: VehicleSpec) => void
+  applyVehiclePreset: (presetId: keyof typeof VEHICLE_PRESETS) => void
+  saveCurrentBuild: (name: string) => string
+  loadSavedBuild: (buildId: string) => void
+  deleteSavedBuild: (buildId: string) => void
   setKeyboardInput: (key: keyof DriveInputState, active: boolean) => void
   setGamepadConnected: (connected: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
+  setPhysicsTelemetry: (next: Partial<PhysicsDebugTelemetryV2>) => void
   advanceMission: (event: MissionType, amount?: number) => void
   setMissionProgress: (event: MissionType, progress: number) => void
   restartRun: () => void
 }
 
-export const useGameStore = create<GameState>((set) => ({
+const initialVehicleSpec = getInitialVehicleSpec()
+
+export const useGameStore = create<GameState>((set, get) => ({
   damage: 0,
   score: 0,
   bestScore: 0,
@@ -85,16 +153,20 @@ export const useGameStore = create<GameState>((set) => ({
   restartToken: 0,
   engineMuted: true,
   batterySaverMode: 'auto',
-  selectedMapId: 'city',
+  selectedMapId: 'gaia',
   proceduralMapSeed: 1,
-  selectedCarColor: CAR_COLOR_OPTIONS[0],
-  selectedCarProfile: 'steady',
+  vehicleSpec: initialVehicleSpec,
+  vehicleSpecEvaluation: evaluateVehicleSpec(initialVehicleSpec),
+  vehiclePhysicsTuning: toVehiclePhysicsTuning(initialVehicleSpec),
+  selectedCarColor: initialVehicleSpec.cosmetics.bodyColor,
   mission: buildMission(0),
   gamepadConnected: false,
   keyboardInput: createInputState(),
+  savedBuilds: getInitialSavedBuilds(),
   hitFxToken: 0,
   hitFxStrength: 0,
   lastHitLabel: '',
+  physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
   addDamage: (amount) =>
     set((state) => {
       if (state.status === 'lost') {
@@ -153,6 +225,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
       proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
     })),
@@ -167,18 +240,101 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
     })),
   setSelectedCarColor: (color) =>
-    set((state) => ({
-      ...state,
-      selectedCarColor: color,
-    })),
-  setSelectedCarProfile: (profile) =>
-    set((state) => ({
-      ...state,
-      selectedCarProfile: profile,
-    })),
+    set((state) => {
+      const nextSpec = sanitizeVehicleSpec({
+        ...state.vehicleSpec,
+        cosmetics: {
+          ...state.vehicleSpec.cosmetics,
+          bodyColor: color,
+        },
+      })
+      persistActiveSpec(nextSpec)
+      return {
+        ...state,
+        selectedCarColor: nextSpec.cosmetics.bodyColor,
+        vehicleSpec: nextSpec,
+      }
+    }),
+  setVehicleSpec: (vehicleSpec) =>
+    set((state) => {
+      const sanitized = sanitizeVehicleSpec(vehicleSpec)
+      persistActiveSpec(sanitized)
+      return {
+        ...state,
+        vehicleSpec: sanitized,
+        vehicleSpecEvaluation: evaluateVehicleSpec(sanitized),
+        vehiclePhysicsTuning: toVehiclePhysicsTuning(sanitized),
+        selectedCarColor: sanitized.cosmetics.bodyColor,
+      }
+    }),
+  applyVehiclePreset: (presetId) =>
+    set((state) => {
+      const preset = VEHICLE_PRESETS[presetId]
+      const sanitized = sanitizeVehicleSpec(preset)
+      persistActiveSpec(sanitized)
+      return {
+        ...state,
+        vehicleSpec: sanitized,
+        vehicleSpecEvaluation: evaluateVehicleSpec(sanitized),
+        vehiclePhysicsTuning: toVehiclePhysicsTuning(sanitized),
+        selectedCarColor: sanitized.cosmetics.bodyColor,
+      }
+    }),
+  saveCurrentBuild: (name) => {
+    const state = get()
+    const timestamp = new Date().toISOString()
+    const sanitized = sanitizeVehicleSpec({ ...state.vehicleSpec, name })
+    const buildId = `${Date.now()}-${Math.round(Math.random() * 1_000_000)}`
+    const nextBuild: SavedVehicleBuild = {
+      id: buildId,
+      createdAt: timestamp,
+      spec: sanitized,
+    }
+    const nextBuilds = [nextBuild, ...state.savedBuilds].slice(0, 14)
+
+    persistBuilds(nextBuilds)
+    persistActiveSpec(sanitized)
+    set({
+      savedBuilds: nextBuilds,
+      vehicleSpec: sanitized,
+      vehicleSpecEvaluation: evaluateVehicleSpec(sanitized),
+      vehiclePhysicsTuning: toVehiclePhysicsTuning(sanitized),
+      selectedCarColor: sanitized.cosmetics.bodyColor,
+    })
+    return buildId
+  },
+  loadSavedBuild: (buildId) =>
+    set((state) => {
+      const selected = state.savedBuilds.find((build) => build.id === buildId)
+      if (!selected) {
+        return state
+      }
+      const sanitized = sanitizeVehicleSpec(selected.spec)
+      persistActiveSpec(sanitized)
+      return {
+        ...state,
+        vehicleSpec: sanitized,
+        vehicleSpecEvaluation: evaluateVehicleSpec(sanitized),
+        vehiclePhysicsTuning: toVehiclePhysicsTuning(sanitized),
+        selectedCarColor: sanitized.cosmetics.bodyColor,
+      }
+    }),
+  deleteSavedBuild: (buildId) =>
+    set((state) => {
+      const nextBuilds = state.savedBuilds.filter((build) => build.id !== buildId)
+      if (nextBuilds.length === state.savedBuilds.length) {
+        return state
+      }
+      persistBuilds(nextBuilds)
+      return {
+        ...state,
+        savedBuilds: nextBuilds,
+      }
+    }),
   setKeyboardInput: (key, active) =>
     set((state) => ({
       ...state,
@@ -201,6 +357,14 @@ export const useGameStore = create<GameState>((set) => ({
       ...state,
       speedKph,
       steeringDeg,
+    })),
+  setPhysicsTelemetry: (next) =>
+    set((state) => ({
+      ...state,
+      physicsTelemetry: {
+        ...state.physicsTelemetry,
+        ...next,
+      },
     })),
   advanceMission: (event, amount = 1) =>
     set((state) => {
@@ -265,6 +429,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
     })),
 }))

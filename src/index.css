@@ -99,6 +99,14 @@ body {
   gap: 0.45rem;
 }
 
+.hud-feedback-row {
+  margin-top: 0.32rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
 .mission-card {
   margin-top: 0.42rem;
   background: rgba(255, 255, 255, 0.9);
@@ -136,7 +144,7 @@ body {
 
 .hud-panel {
   align-self: flex-end;
-  width: min(300px, 72vw);
+  width: min(350px, 82vw);
   background: rgba(240, 250, 255, 0.83);
   border: 2px solid rgba(255, 255, 255, 0.9);
   border-radius: 1rem;
@@ -144,6 +152,46 @@ body {
   box-shadow: 0 12px 26px rgba(10, 44, 70, 0.2);
   backdrop-filter: blur(4px);
   pointer-events: auto;
+}
+
+.telemetry-chip {
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #16465f;
+}
+
+.telemetry-chip-road {
+  background: linear-gradient(180deg, #e7f8ff, #ccedff);
+}
+
+.telemetry-chip-grass {
+  background: linear-gradient(180deg, #e9ffe8, #cbf4ca);
+}
+
+.telemetry-chip-speed-crawl {
+  color: #245d77;
+}
+
+.telemetry-chip-speed-cruise {
+  color: #2d6f2f;
+}
+
+.telemetry-chip-speed-fast {
+  color: #8f5c1a;
+}
+
+.telemetry-chip-speed-max {
+  color: #8d2a1f;
+}
+
+.telemetry-chip-warning {
+  background: linear-gradient(180deg, #ffe7ce, #ffd1a1);
+  color: #7c2b13;
+  border-color: #ffd8b8;
 }
 
 .hud-card {
@@ -241,6 +289,192 @@ body {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 0.4rem;
+}
+
+.builder-panel {
+  margin-top: 0.45rem;
+  padding: 0.4rem 0.45rem 0.5rem;
+  background: rgba(255, 255, 255, 0.86);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 0.75rem;
+}
+
+.builder-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.builder-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #1f4f68;
+}
+
+.builder-budget {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #355f78;
+}
+
+.builder-presets,
+.builder-inline {
+  margin-top: 0.34rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.builder-row {
+  margin-top: 0.36rem;
+}
+
+.builder-field-label {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #2a5f7a;
+}
+
+.builder-chip {
+  font: inherit;
+  font-size: 0.71rem;
+  font-weight: 800;
+  padding: 0.14rem 0.45rem;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: rgba(255, 255, 255, 0.9);
+  color: #184763;
+}
+
+.builder-chip.active {
+  background: linear-gradient(180deg, #45cb8f, #2f9e68);
+  color: #f4fffa;
+  border-color: #b8f2d8;
+}
+
+.builder-input {
+  width: 100%;
+  margin-top: 0.22rem;
+  border-radius: 0.52rem;
+  border: 2px solid #cbe6f8;
+  padding: 0.22rem 0.36rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #113b53;
+  background: #f5fcff;
+}
+
+.builder-color-row {
+  margin-top: 0.35rem;
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.builder-slider {
+  margin-top: 0.34rem;
+  display: block;
+  font-size: 0.73rem;
+  font-weight: 800;
+  color: #245267;
+}
+
+.builder-slider input[type='range'] {
+  width: 100%;
+  margin-top: 0.17rem;
+}
+
+.builder-stats {
+  margin-top: 0.38rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.builder-stat {
+  display: grid;
+  grid-template-columns: 5.6rem 1fr;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #2a5f7a;
+}
+
+.builder-bar {
+  height: 0.42rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(24, 71, 99, 0.18);
+}
+
+.builder-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ffb74a, #4dbaf6);
+}
+
+.builder-warning {
+  margin-top: 0.28rem;
+  border-radius: 0.42rem;
+  padding: 0.19rem 0.3rem;
+  background: rgba(255, 170, 83, 0.24);
+  border: 1px solid rgba(202, 102, 29, 0.4);
+  font-size: 0.66rem;
+  font-weight: 800;
+  color: #7c3a11;
+}
+
+.builder-save-row {
+  margin-top: 0.38rem;
+}
+
+.builder-save,
+.builder-load,
+.builder-delete {
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  padding: 0.13rem 0.44rem;
+  color: #17445f;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.builder-save {
+  background: linear-gradient(180deg, #5dc8ff, #2798d3);
+  color: #f7fcff;
+  border-color: #a7e2ff;
+}
+
+.builder-saved-list {
+  margin-top: 0.36rem;
+  max-height: 5.2rem;
+  overflow: auto;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.builder-saved-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.22rem;
+}
+
+.builder-load {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.builder-delete {
+  width: 1.7rem;
+  padding: 0.13rem 0;
 }
 
 .map-picker {
@@ -463,6 +697,10 @@ body {
     padding: 0.65rem;
   }
 
+  .hud-panel {
+    width: min(350px, 92vw);
+  }
+
   .hud-card {
     font-size: 0.95rem;
   }
@@ -474,6 +712,10 @@ body {
 
   .instructions {
     font-size: 0.82rem;
+  }
+
+  .telemetry-chip {
+    font-size: 0.68rem;
   }
 
   .touch-btn {

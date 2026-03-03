@@ -4,12 +4,14 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
-import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
+import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput, resetGamepadInput, setGamepadInput } from './keys'
-import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
+import { getMaterialTuningAt, getSurfaceMaterialAt, getTrackMap, sampleTerrainHeight } from './maps'
+import { emitPhysicsEventV2, evaluateImpactDamageV2, normalizeCollisionMaterialV2 } from './physics'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
-import type { CollisionMaterial, Pickup } from './types'
+import type { CollisionMaterial, ImpactTierV2, MaterialKeyV2, PartDamageStateV2, PartZoneIdV2, Pickup } from './types'
+import { PHYSICS_API_VERSION_V2 } from './types'
 
 type PlayerCarProps = {
   pickups: Pickup[]
@@ -37,10 +39,10 @@ const normalizeAngleDelta = (angle: number) => {
   return out
 }
 
-const getCarPalette = (baseHex: string, damage: number) => {
+const getCarPalette = (baseHex: string, accentHex: string, damage: number) => {
   const t = Math.min(1, Math.max(0, damage / MAX_DAMAGE))
   const body = tempColor.set(baseHex).clone().lerp(warningColor, t * 0.65)
-  const accent = tempColor.set(baseHex).clone().lerp(new Color('#f2f2f2'), 0.75 - t * 0.35)
+  const accent = tempColor.set(accentHex).clone().lerp(new Color('#f2f2f2'), 0.35 - t * 0.2)
   return {
     body: `#${body.getHexString()}`,
     accent: `#${accent.getHexString()}`,
@@ -48,31 +50,32 @@ const getCarPalette = (baseHex: string, damage: number) => {
 }
 
 const getCollisionMaterial = (name: string): CollisionMaterial => {
-  if (name.startsWith('hard-')) return 'hard'
-  if (name.startsWith('medium-')) return 'medium'
-  return 'soft'
+  if (name.startsWith('rock-')) return 'rock'
+  if (name.startsWith('metal-') || name.startsWith('hard-')) return 'metal'
+  if (name.startsWith('wood-') || name.startsWith('medium-')) return 'wood'
+  if (name.startsWith('glass-')) return 'glass'
+  if (name.startsWith('rubber-') || name.startsWith('soft-')) return 'rubber'
+  return 'rubber'
 }
 
-const getImpactLabel = (material: CollisionMaterial, damageDelta: number, scrape = false) => {
+const getImpactLabel = (material: MaterialKeyV2, tier: ImpactTierV2, scrape = false) => {
   if (scrape) {
     return 'Side scrape'
   }
-  if (material === 'soft') {
+  if (material === 'rubber') {
     return 'Soft bump'
   }
-  if (material === 'medium') {
-    return damageDelta >= DAMAGE_TIERS.medium ? 'Crate hit' : 'Light hit'
+  if (material === 'wood') {
+    return tier === 'major' || tier === 'critical' ? 'Crate hit' : 'Light hit'
   }
-  return damageDelta >= DAMAGE_TIERS.high ? 'Big crash' : 'Hard hit'
+  return tier === 'critical' || tier === 'major' ? 'Big crash' : 'Hard hit'
 }
 
-const getDamageForImpact = (speed: number, material: CollisionMaterial, forwardAlignment: number) => {
-  const speedFactor = Math.min(1.25, Math.max(0, speed / 11))
-  const angleFactor = 0.55 + forwardAlignment * 0.75
-  const materialScale = material === 'hard' ? 1.4 : material === 'medium' ? 0.95 : 0.35
-
-  const base = DAMAGE_TIERS.medium * speedFactor * angleFactor * materialScale
-  return Math.max(1, Math.round(base))
+const getPartStateForDamage = (zoneDamage: number): PartDamageStateV2 => {
+  if (zoneDamage >= 80) return 'detached'
+  if (zoneDamage >= 58) return 'cracked'
+  if (zoneDamage >= 28) return 'dented'
+  return 'intact'
 }
 
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
@@ -90,6 +93,16 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const hardContactCountRef = useRef(0)
   const scrapeDamageTimerRef = useRef(0)
   const armorTimerRef = useRef(0)
+  const zoneDamageRef = useRef<Record<PartZoneIdV2, number>>({ front: 0, rear: 0, left: 0, right: 0 })
+  const zoneStateRef = useRef<Record<PartZoneIdV2, PartDamageStateV2>>({
+    front: 'intact',
+    rear: 'intact',
+    left: 'intact',
+    right: 'intact',
+  })
+  const disabledEmittedRef = useRef(false)
+  const nanGuardTripsRef = useRef(0)
+  const speedClampTripsRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
@@ -106,8 +119,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const damage = useGameStore((state) => state.damage)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const vehicleSpec = useGameStore((state) => state.vehicleSpec)
+  const vehiclePhysicsTuning = useGameStore((state) => state.vehiclePhysicsTuning)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
   const restartToken = useGameStore((state) => state.restartToken)
@@ -119,9 +132,12 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const restartRun = useGameStore((state) => state.restartRun)
   const setTelemetry = useGameStore((state) => state.setTelemetry)
   const setGamepadConnected = useGameStore((state) => state.setGamepadConnected)
+  const setPhysicsTelemetry = useGameStore((state) => state.setPhysicsTelemetry)
 
-  const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
-  const profile = CAR_PROFILES[selectedCarProfile]
+  const palette = useMemo(
+    () => getCarPalette(vehicleSpec.cosmetics.bodyColor, vehicleSpec.cosmetics.accentColor, damage),
+    [vehicleSpec.cosmetics.accentColor, vehicleSpec.cosmetics.bodyColor, damage],
+  )
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
   const startPosition = useMemo(() => {
@@ -152,11 +168,27 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     hardContactCountRef.current = 0
     scrapeDamageTimerRef.current = 0
     armorTimerRef.current = 0
+    zoneDamageRef.current = { front: 0, rear: 0, left: 0, right: 0 }
+    zoneStateRef.current = { front: 'intact', rear: 'intact', left: 'intact', right: 'intact' }
+    disabledEmittedRef.current = false
+    nanGuardTripsRef.current = 0
+    speedClampTripsRef.current = 0
     setTelemetry(0, 0)
+    setPhysicsTelemetry({
+      speedKph: 0,
+      steeringDeg: 0,
+      slipRatio: 0,
+      latestImpactImpulse: 0,
+      latestImpactTier: 'minor',
+      latestImpactMaterial: 'rubber',
+      hardContactCount: 0,
+      nanGuardTrips: 0,
+      speedClampTrips: 0,
+    })
     smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
-  }, [restartToken, setTelemetry, startPosition, startYaw])
+  }, [restartToken, setPhysicsTelemetry, setTelemetry, startPosition, startYaw])
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -279,6 +311,49 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
 
     const pos = body.translation()
+    const rawLinVel = body.linvel()
+    const rawAngVel = body.angvel()
+    const isFiniteState =
+      Number.isFinite(pos.x) &&
+      Number.isFinite(pos.y) &&
+      Number.isFinite(pos.z) &&
+      Number.isFinite(rawLinVel.x) &&
+      Number.isFinite(rawLinVel.y) &&
+      Number.isFinite(rawLinVel.z) &&
+      Number.isFinite(rawAngVel.x) &&
+      Number.isFinite(rawAngVel.y) &&
+      Number.isFinite(rawAngVel.z)
+    if (!isFiniteState) {
+      nanGuardTripsRef.current += 1
+      body.setTranslation(startPosition, true)
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+      setTelemetry(0, 0)
+      setPhysicsTelemetry({
+        speedKph: 0,
+        steeringDeg: 0,
+        slipRatio: 0,
+        hardContactCount: hardContactCountRef.current,
+        nanGuardTrips: nanGuardTripsRef.current,
+        speedClampTrips: speedClampTripsRef.current,
+      })
+      return
+    }
+
+    const planarSpeedBeforeClamp = Math.hypot(rawLinVel.x, rawLinVel.z)
+    if (planarSpeedBeforeClamp > 52) {
+      speedClampTripsRef.current += 1
+      const clampScale = 52 / planarSpeedBeforeClamp
+      body.setLinvel({ x: rawLinVel.x * clampScale, y: rawLinVel.y, z: rawLinVel.z * clampScale }, true)
+    }
+    const angularMag = Math.hypot(rawAngVel.x, rawAngVel.y, rawAngVel.z)
+    if (angularMag > 16) {
+      const clampScale = 16 / angularMag
+      body.setAngvel({ x: rawAngVel.x * clampScale, y: rawAngVel.y * clampScale, z: rawAngVel.z * clampScale }, true)
+    }
+
+    const linVel = body.linvel()
     const maxOutOfBounds = map.worldHalf * 1.08
     if (Math.abs(pos.x) > maxOutOfBounds || Math.abs(pos.z) > maxOutOfBounds) {
       body.setTranslation(startPosition, true)
@@ -293,13 +368,29 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       smoothedForwardRef.current.set(Math.sin(startYaw), 0, Math.cos(startYaw))
       smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
       setTelemetry(0, 0)
+      setPhysicsTelemetry({
+        speedKph: 0,
+        steeringDeg: 0,
+        slipRatio: 0,
+        hardContactCount: hardContactCountRef.current,
+        nanGuardTrips: nanGuardTripsRef.current,
+        speedClampTrips: speedClampTripsRef.current,
+      })
       triggerHitFx(0.22, 'Back on road')
       onPlayerPosition([startPosition.x, startPosition.y, startPosition.z])
       return
     }
     if (status === 'lost') {
       setTelemetry(0, 0)
-      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: profile.engineTone })
+      setPhysicsTelemetry({
+        speedKph: 0,
+        steeringDeg: 0,
+        slipRatio: 0,
+        hardContactCount: hardContactCountRef.current,
+        nanGuardTrips: nanGuardTripsRef.current,
+        speedClampTrips: speedClampTripsRef.current,
+      })
+      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: vehiclePhysicsTuning.engineTone })
       if (inputRef.current.restart) {
         restartRun()
       }
@@ -309,7 +400,6 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const input = getMergedInput(inputRef.current)
     armorTimerRef.current = Math.max(0, armorTimerRef.current - delta)
     const armorActive = armorTimerRef.current > 0
-    const linVel = body.linvel()
     const rotation = body.rotation()
     const yaw = Math.atan2(
       2 * (rotation.w * rotation.y + rotation.x * rotation.z),
@@ -321,8 +411,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const rightZ = -Math.sin(yaw)
     const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
     const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
-    const onRoad = isPointOnRoad(map, pos.x, pos.z)
-    const surfaceConfig = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
+    const surfaceMaterial = getSurfaceMaterialAt(map, pos.x, pos.z)
+    const materialTuning = getMaterialTuningAt(map, pos.x, pos.z)
+    const onRoad = surfaceMaterial === 'asphalt' || surfaceMaterial === 'basalt' || surfaceMaterial === 'regolith'
+    const baseSurface = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
+    const surfaceConfig = {
+      ...baseSurface,
+      gripFactor: baseSurface.gripFactor * materialTuning.tractionMultiplier,
+      forwardTopSpeed: baseSurface.forwardTopSpeed * materialTuning.topSpeedMultiplier,
+      reverseTopSpeed: baseSurface.reverseTopSpeed * materialTuning.topSpeedMultiplier,
+      forwardAcceleration: baseSurface.forwardAcceleration / materialTuning.dragMultiplier,
+      reverseAcceleration: baseSurface.reverseAcceleration / materialTuning.dragMultiplier,
+    }
     const damageRatio = Math.min(1, damage / MAX_DAMAGE)
     const accelScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.accelerationLoss
     const speedScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.topSpeedLoss
@@ -348,8 +448,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const wantsForward = effectiveThrottle > 0.02
     const wantsBackward = effectiveThrottle < -0.02
     const throttleAbs = Math.min(1, Math.abs(effectiveThrottle))
-    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * profile.accelMult
-    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * profile.accelMult * 1.25
+    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * vehiclePhysicsTuning.accelMult
+    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * vehiclePhysicsTuning.accelMult * 1.25
 
     if (wantsForward && nextForwardSpeed >= -0.15) {
       nextForwardSpeed += throttleAbs * forwardAccel * delta
@@ -358,9 +458,9 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
 
     if (wantsBackward && nextForwardSpeed > 0) {
-      nextForwardSpeed -= VEHICLE_PHYSICS.brakeDecel * delta
+      nextForwardSpeed -= VEHICLE_PHYSICS.brakeDecel * vehiclePhysicsTuning.brakeMult * delta
     } else if (wantsForward && nextForwardSpeed < 0) {
-      nextForwardSpeed += VEHICLE_PHYSICS.reverseBrakeDecel * delta
+      nextForwardSpeed += VEHICLE_PHYSICS.reverseBrakeDecel * vehiclePhysicsTuning.brakeMult * delta
     }
 
     if (Math.abs(throttle) < 0.02) {
@@ -372,13 +472,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const dragForce = (VEHICLE_PHYSICS.rollingResistance * speedAbs + VEHICLE_PHYSICS.aeroDrag * speedAbs * speedAbs) * delta
     nextForwardSpeed -= Math.sign(nextForwardSpeed) * Math.min(speedAbs, dragForce)
 
-    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * profile.topSpeedMult
-    const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * profile.reverseSpeedMult * 1.2
+    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * vehiclePhysicsTuning.topSpeedMult
+    const maxReverseSpeed =
+      surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * vehiclePhysicsTuning.reverseSpeedMult * 1.2
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
     const gripLerp = Math.min(
       1,
-      delta * (6.4 + Math.abs(nextForwardSpeed) * 0.45) * gripScale * surfaceConfig.gripFactor * profile.gripMult,
+      delta *
+        (6.4 + Math.abs(nextForwardSpeed) * 0.45) *
+        gripScale *
+        surfaceConfig.gripFactor *
+        vehiclePhysicsTuning.gripMult,
     )
     const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
 
@@ -389,12 +494,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       VEHICLE_PHYSICS.maxSteerRad *
       (0.55 + speedSteerScale * 0.45) *
       steeringScale *
-      profile.steeringMult
+      vehiclePhysicsTuning.steeringMult
     const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
     steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
     const reverseSteer = nextForwardSpeed < -0.15 ? -0.55 : 1
     const targetYawRate =
-      ((nextForwardSpeed / VEHICLE_PHYSICS.wheelBase) * Math.tan(steerAngleRef.current) * reverseSteer) /
+      ((nextForwardSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) *
+        Math.tan(steerAngleRef.current) *
+        reverseSteer) /
       Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
     const yawBlend = Math.min(1, delta * 10)
     yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
@@ -424,6 +531,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       true,
     )
     setTelemetry(Math.abs(nextForwardSpeed) * 3.6, (steerAngleRef.current * 180) / Math.PI)
+    setPhysicsTelemetry({
+      speedKph: Math.abs(nextForwardSpeed) * 3.6,
+      steeringDeg: (steerAngleRef.current * 180) / Math.PI,
+      slipRatio: Math.min(1, Math.abs(nextLateralSpeed) / Math.max(0.1, Math.abs(nextForwardSpeed) + Math.abs(nextLateralSpeed))),
+      hardContactCount: hardContactCountRef.current,
+      nanGuardTrips: nanGuardTripsRef.current,
+      speedClampTrips: speedClampTripsRef.current,
+    })
 
     onPlayerPosition([pos.x, pos.y, pos.z])
 
@@ -452,10 +567,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       scrapeDamageTimerRef.current += delta
       if (scrapeDamageTimerRef.current >= 0.72) {
         scrapeDamageTimerRef.current = 0
-        const scrapeDamage = Math.round(profile.damageTakenMult * KID_TUNING.damageTakenScale * (armorActive ? KID_TUNING.armorDamageScale : 1))
+        const scrapeDamage = Math.round(
+          vehiclePhysicsTuning.damageTakenMult *
+            KID_TUNING.damageTakenScale *
+            (armorActive ? KID_TUNING.armorDamageScale : 1),
+        )
         if (scrapeDamage > 0) {
           addDamage(scrapeDamage)
-          triggerHitFx(0.2, getImpactLabel('hard', scrapeDamage, true))
+          triggerHitFx(0.2, getImpactLabel('metal', 'minor', true))
         }
       }
     } else {
@@ -471,7 +590,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       direction: engineDirection,
       surface: onRoad ? 'road' : 'grass',
       engineLoad,
-      tone: profile.engineTone,
+      tone: vehiclePhysicsTuning.engineTone,
     })
 
     const camPosSmoothing = 1 - Math.exp(-delta * 9)
@@ -580,7 +699,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       ccd
       angularDamping={1.8}
       linearDamping={0.18}
-      mass={profile.mass}
+      mass={vehiclePhysicsTuning.mass}
       onCollisionEnter={(payload) => {
         if (status === 'lost') {
           return
@@ -600,10 +719,6 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         if (otherBodyName.startsWith('terrain-')) {
           return
         }
-        const material = getCollisionMaterial(otherBodyName)
-        if (material === 'hard') {
-          hardContactCountRef.current += 1
-        }
 
         const velocity = body.linvel()
         const planarSpeed = Math.hypot(velocity.x, velocity.z)
@@ -619,54 +734,131 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         const velocityDirZ = velocity.z / speed
         const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
         const verticalSpeed = Math.abs(velocity.y)
+        const rightX = Math.cos(yaw)
+        const rightZ = -Math.sin(yaw)
+        const selfPos = body.translation()
+        const otherPos = payload.other.rigidBody?.translation?.()
+        const dx = (otherPos?.x ?? selfPos.x) - selfPos.x
+        const dz = (otherPos?.z ?? selfPos.z) - selfPos.z
+        const localImpactX = dx * rightX + dz * rightZ
+        const localImpactZ = dx * forwardX + dz * forwardZ
 
-        if (material === 'soft' && planarSpeed < 7.2 && verticalSpeed < 2.4) {
+        const impact = evaluateImpactDamageV2({
+          vehicleMass: Math.max(0.8, body.mass()),
+          planarSpeed,
+          verticalSpeed,
+          forwardAlignment,
+          armorScale: armorTimerRef.current > 0 ? KID_TUNING.armorDamageScale : 1,
+          profileDamageScale: vehiclePhysicsTuning.damageTakenMult,
+          kidDamageScale: KID_TUNING.damageTakenScale,
+          localImpactX,
+          localImpactZ,
+          otherBodyName,
+        })
+
+        if (impact.material === 'metal' || impact.material === 'rock') {
+          hardContactCountRef.current += 1
+        }
+
+        emitPhysicsEventV2('impact', {
+          apiVersion: PHYSICS_API_VERSION_V2,
+          sourceId: otherBodyName || 'unknown',
+          sourceMaterial: impact.material,
+          zone: impact.zone,
+          tier: impact.tier,
+          energyJoules: impact.energyJoules,
+          impulse: impact.impulse,
+          speedMps: planarSpeed,
+        })
+        setPhysicsTelemetry({
+          latestImpactImpulse: impact.impulse,
+          latestImpactTier: impact.tier,
+          latestImpactMaterial: impact.material,
+          hardContactCount: hardContactCountRef.current,
+          nanGuardTrips: nanGuardTripsRef.current,
+          speedClampTrips: speedClampTripsRef.current,
+        })
+        if (impact.skipDamage) {
           return
         }
 
-        const damageDelta = getDamageForImpact(planarSpeed, material, forwardAlignment)
-        const scaledDamage = Math.max(
-          1,
-          Math.round(
-            damageDelta *
-              profile.damageTakenMult *
-              KID_TUNING.damageTakenScale *
-              (armorTimerRef.current > 0 ? KID_TUNING.armorDamageScale : 1),
-          ),
-        )
-        addDamage(scaledDamage)
-        playCollisionSound(material === 'hard', planarSpeed)
+        addDamage(impact.damageDelta)
+        const nextTotalDamage = Math.min(MAX_DAMAGE, damage + impact.damageDelta)
+        const previousZoneDamage = zoneDamageRef.current[impact.zone]
+        const nextZoneDamage = Math.min(100, previousZoneDamage + impact.damageDelta)
+        zoneDamageRef.current[impact.zone] = nextZoneDamage
+        const previousPartState = zoneStateRef.current[impact.zone]
+        const nextPartState = getPartStateForDamage(nextZoneDamage)
+        zoneStateRef.current[impact.zone] = nextPartState
+
+        emitPhysicsEventV2('damage_applied', {
+          apiVersion: PHYSICS_API_VERSION_V2,
+          sourceId: otherBodyName || 'unknown',
+          zone: impact.zone,
+          appliedDamage: impact.damageDelta,
+          totalDamage: nextTotalDamage,
+          tier: impact.tier,
+        })
+        if (previousPartState !== nextPartState) {
+          emitPhysicsEventV2('part_state_changed', {
+            apiVersion: PHYSICS_API_VERSION_V2,
+            zone: impact.zone,
+            previousState: previousPartState,
+            nextState: nextPartState,
+            zoneDamage: nextZoneDamage,
+          })
+        }
+        if (!disabledEmittedRef.current && nextTotalDamage >= MAX_DAMAGE) {
+          disabledEmittedRef.current = true
+          emitPhysicsEventV2('vehicle_disabled', {
+            apiVersion: PHYSICS_API_VERSION_V2,
+            totalDamage: nextTotalDamage,
+            reason: 'damage_limit',
+          })
+        }
+        playCollisionSound(impact.material === 'metal' || impact.material === 'rock', planarSpeed)
         const hitStrength = Math.min(
           1,
-          Math.max(0.16, planarSpeed / 10 + (material === 'hard' ? 0.25 : material === 'medium' ? 0.1 : 0)),
+          Math.max(
+            0.16,
+            planarSpeed / 11 +
+              (impact.material === 'metal' || impact.material === 'rock' ? 0.25 : impact.material === 'wood' ? 0.1 : 0),
+          ),
         )
         shakeStrengthRef.current = Math.max(shakeStrengthRef.current, hitStrength * 0.45)
         sparkStrengthRef.current = Math.max(sparkStrengthRef.current, hitStrength)
-        triggerHitFx(hitStrength, getImpactLabel(material, scaledDamage))
+        triggerHitFx(hitStrength, getImpactLabel(impact.material, impact.tier))
         lastDamageAt.current = now
       }}
       onCollisionExit={(payload) => {
-        const material = getCollisionMaterial(payload.other.rigidBodyObject?.name ?? '')
-        if (material === 'hard') {
+        const material = normalizeCollisionMaterialV2(getCollisionMaterial(payload.other.rigidBodyObject?.name ?? ''))
+        if (material === 'metal' || material === 'rock') {
           hardContactCountRef.current = Math.max(0, hardContactCountRef.current - 1)
         }
+        setPhysicsTelemetry({
+          hardContactCount: hardContactCountRef.current,
+          nanGuardTrips: nanGuardTripsRef.current,
+          speedClampTrips: speedClampTripsRef.current,
+        })
       }}
     >
-      <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
-      <CarModel
-        bodyColor={palette.body}
-        accentColor={palette.accent}
-        damage={damage}
-        lowPowerMode={lowPowerMode}
-        showTrail
-        crackOpacity={crackOpacity}
-        bumperRef={bumperRef}
-        loosePanelRef={loosePanelRef}
-        hoodRef={hoodRef}
-        roofRef={roofRef}
-        leftDoorRef={leftDoorRef}
-        rightDoorRef={rightDoorRef}
-      />
+      <group scale={vehiclePhysicsTuning.scale}>
+        <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
+        <CarModel
+          bodyColor={palette.body}
+          accentColor={palette.accent}
+          damage={damage}
+          lowPowerMode={lowPowerMode}
+          showTrail
+          crackOpacity={crackOpacity}
+          bumperRef={bumperRef}
+          loosePanelRef={loosePanelRef}
+          hoodRef={hoodRef}
+          roofRef={roofRef}
+          leftDoorRef={leftDoorRef}
+          rightDoorRef={rightDoorRef}
+        />
+      </group>
       {damage >= 70 && damage < MAX_DAMAGE ? (
         <group position={[0, 1.05, -0.8]}>
           <mesh>

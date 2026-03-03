@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { CAR_COLOR_OPTIONS, CAR_PROFILE_ORDER, CAR_PROFILES, MAX_DAMAGE } from './config'
+import { MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
 import { MAP_LABELS, MAP_ORDER } from './maps'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
+import { VehicleBuilder } from './ui/builder/VehicleBuilder'
 
 type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'restart'
 
@@ -63,21 +64,18 @@ export const Hud = ({
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const mission = useGameStore((state) => state.mission)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
+  const physicsTelemetry = useGameStore((state) => state.physicsTelemetry)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setBatterySaverMode = useGameStore((state) => state.setBatterySaverMode)
   const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
   const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
-  const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
-  const setSelectedCarProfile = useGameStore((state) => state.setSelectedCarProfile)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
 
@@ -117,6 +115,11 @@ export const Hud = ({
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
           <div className="hud-card hud-card-compact">Steer: {steeringDeg >= 0 ? '+' : ''}{Math.round(steeringDeg)}°</div>
         </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">Slip: {Math.round(physicsTelemetry.slipRatio * 100)}%</div>
+          <div className="hud-card hud-card-compact">Impact: {physicsTelemetry.latestImpactTier}/{physicsTelemetry.latestImpactMaterial}</div>
+          <div className="hud-card hud-card-compact">Guards N{physicsTelemetry.nanGuardTrips} S{physicsTelemetry.speedClampTrips}</div>
+        </div>
         <div className="mission-card">
           <div className="mission-title">
             Mission: {mission.label}
@@ -155,31 +158,7 @@ export const Hud = ({
           </div>
         </div>
 
-        <div className="color-picker">
-          {CAR_COLOR_OPTIONS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={`color-swatch${selectedCarColor === color ? ' active' : ''}`}
-              style={{ background: color }}
-              onClick={() => setSelectedCarColor(color)}
-              aria-label={`Select car color ${color}`}
-            />
-          ))}
-        </div>
-
-        <div className="profile-picker">
-          {CAR_PROFILE_ORDER.map((profileId) => (
-            <button
-              key={profileId}
-              type="button"
-              className={`profile-chip${selectedCarProfile === profileId ? ' active' : ''}`}
-              onClick={() => setSelectedCarProfile(profileId)}
-            >
-              {CAR_PROFILES[profileId].label}
-            </button>
-          ))}
-        </div>
+        <VehicleBuilder />
 
         <div className="map-picker">
           {MAP_ORDER.map((mapId) => (

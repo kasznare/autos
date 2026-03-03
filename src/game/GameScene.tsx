@@ -5,28 +5,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CanvasTexture, Group, PlaneGeometry, RepeatWrapping } from 'three'
 import { CarModel } from './CarModel'
 import { TRACK_SIZE } from './config'
-import { getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
+import { createInitialDestructibles, getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
 import { createRoomChannel, isMultiplayerConfigured, makeClientId, type CarSnapshot, type RoomChannelHandle } from './multiplayer'
 import { PlayerCar } from './PlayerCar'
+import { emitPhysicsEventV2, getMaterialResponseV2, normalizeCollisionMaterialV2 } from './physics'
 import { useGameStore } from './store'
+import { PHYSICS_API_VERSION_V2 } from './types'
 import type { DestructibleProp, Pickup, WorldObstacle } from './types'
-import { DESTRUCTIBLE_COLORS, DESTRUCTIBLE_SPAWN_POINTS, INITIAL_DESTRUCTIBLES, INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
 
-const MIN_STARS = 5
-const MIN_REPAIRS = 3
-const MIN_PARTS = 2
 const TRAFFIC_CAR_COUNT = 4
-const CRITTER_COUNT = 8
-const CRITTER_BREAK_SPEED = 3.2
-const CRITTER_HIT_RADIUS = 1.05
-const CRITTER_HIT_CHECK_INTERVAL = 0.08
-const CRITTER_RESPAWN_SECONDS = 4.2
 const SPAWN_CHECK_SECONDS = 1.2
 const SPAWN_MARGIN = 4
 const MIN_DISTANCE_FROM_PLAYER = 9
 const MIN_DISTANCE_FROM_PICKUP = 3.2
-const DESTRUCTIBLE_RESPAWN_SECONDS = 3.2
-const DESTRUCTIBLE_BREAK_SPEED = 6.5
 const TERRAIN_MESH_SEGMENTS = 280
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
@@ -697,8 +688,9 @@ type RuntimeCritter = {
 
 const createCritters = (map: TrackMap, seed: number): RuntimeCritter[] => {
   const result: RuntimeCritter[] = []
+  const critterCount = map.spawnRules.hazards.critters.count
   const half = map.worldHalf - 7
-  for (let i = 0; i < 1200 && result.length < CRITTER_COUNT; i += 1) {
+  for (let i = 0; i < 1200 && result.length < critterCount; i += 1) {
     const x = (pseudoNoise(seed + i, 301) * 2 - 1) * half
     const z = (pseudoNoise(seed + i, 302) * 2 - 1) * half
     if (isPointOnRoad(map, x, z)) {
@@ -762,7 +754,18 @@ const ForestCritter = ({
         }
         const v = payload.other.rigidBody?.linvel?.()
         const speed = v ? Math.hypot(v.x, v.z) : 0
-        if (speed >= CRITTER_BREAK_SPEED) {
+        const breakSpeedThreshold = Math.min(map.spawnRules.hazards.critters.breakSpeed, getMaterialResponseV2('wood').breakSpeedMps)
+        if (speed >= breakSpeedThreshold) {
+          emitPhysicsEventV2('impact', {
+            apiVersion: PHYSICS_API_VERSION_V2,
+            sourceId: critter.id,
+            sourceMaterial: 'wood',
+            zone: 'front',
+            tier: speed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
+            energyJoules: speed * speed * 12,
+            impulse: speed * 0.6,
+            speedMps: speed,
+          })
           const p = bodyRef.current?.translation?.()
           const hitPos: [number, number, number] = p
             ? [p.x, p.y, p.z]
@@ -794,34 +797,46 @@ const ForestCritter = ({
   )
 }
 
-const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
-  <RigidBody type="fixed" colliders={false} name={`${obstacle.material}-${obstacle.id}`}>
-    <mesh position={obstacle.position} castShadow receiveShadow>
-      <boxGeometry args={obstacle.size} />
-      <meshStandardMaterial color={obstacle.color} />
-    </mesh>
-    <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
-  </RigidBody>
-)
+const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
+  return (
+    <RigidBody
+      type="fixed"
+      colliders={false}
+      friction={response.friction}
+      restitution={response.restitution}
+      name={`${obstacle.material}-${obstacle.id}`}
+    >
+      <mesh position={obstacle.position} castShadow receiveShadow>
+        <boxGeometry args={obstacle.size} />
+        <meshStandardMaterial color={obstacle.color} />
+      </mesh>
+      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
+    </RigidBody>
+  )
+}
 
-const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
-  <RigidBody
-    colliders={false}
-    position={obstacle.position}
-    mass={0.5}
-    friction={0.8}
-    restitution={0.1}
-    linearDamping={0.9}
-    angularDamping={0.85}
-    name={`${obstacle.material}-${obstacle.id}`}
-  >
-    <mesh castShadow receiveShadow>
-      <boxGeometry args={obstacle.size} />
-      <meshStandardMaterial color={obstacle.color} />
-    </mesh>
-    <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
-  </RigidBody>
-)
+const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
+  return (
+    <RigidBody
+      colliders={false}
+      position={obstacle.position}
+      mass={0.5}
+      friction={response.friction}
+      restitution={response.restitution}
+      linearDamping={0.9}
+      angularDamping={0.85}
+      name={`${obstacle.material}-${obstacle.id}`}
+    >
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={obstacle.size} />
+        <meshStandardMaterial color={obstacle.color} />
+      </mesh>
+      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
+    </RigidBody>
+  )
+}
 
 const chunkOffsets: [number, number, number][] = [
   [-0.22, 0.16, -0.22],
@@ -883,9 +898,11 @@ const BrokenDestructible = ({
 
 const IntactDestructible = ({
   destructible,
+  map,
   onBreak,
 }: {
   destructible: DestructibleProp
+  map: TrackMap
   onBreak: (id: string) => void
 }) => (
   <RigidBody
@@ -905,7 +922,18 @@ const IntactDestructible = ({
       const otherBody = payload.other.rigidBody
       const velocity = otherBody?.linvel?.()
       const planarSpeed = velocity ? Math.hypot(velocity.x, velocity.z) : 0
-      if (planarSpeed >= DESTRUCTIBLE_BREAK_SPEED) {
+      const breakSpeedThreshold = Math.min(map.spawnRules.hazards.destructibles.breakSpeed, getMaterialResponseV2('wood').breakSpeedMps)
+      if (planarSpeed >= breakSpeedThreshold) {
+        emitPhysicsEventV2('impact', {
+          apiVersion: PHYSICS_API_VERSION_V2,
+          sourceId: destructible.id,
+          sourceMaterial: 'wood',
+          zone: 'front',
+          tier: planarSpeed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
+          energyJoules: planarSpeed * planarSpeed * 16,
+          impulse: planarSpeed * 0.7,
+          speedMps: planarSpeed,
+        })
         onBreak(destructible.id)
       }
     }}
@@ -1065,8 +1093,8 @@ const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPowerMode: b
   )
 }
 
-const pickRespawnPoint = (usedIds: Set<string>) => {
-  const available = DESTRUCTIBLE_SPAWN_POINTS.filter((_, idx) => !usedIds.has(`p-${idx}`))
+const pickRespawnPoint = (map: TrackMap, usedIds: Set<string>) => {
+  const available = map.spawnRules.hazards.destructibles.spawnPoints.filter((_, idx) => !usedIds.has(`p-${idx}`))
   if (available.length === 0) {
     return null
   }
@@ -1089,24 +1117,19 @@ export const GameScene = ({
   const restartToken = useGameStore((state) => state.restartToken)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const vehicleSpec = useGameStore((state) => state.vehicleSpec)
   const advanceMission = useGameStore((state) => state.advanceMission)
   const setMissionProgress = useGameStore((state) => state.setMissionProgress)
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
-  const activeStaticObstacles = useMemo(
-    () => (map.sourceId === 'procedural' ? [] : STATIC_OBSTACLES),
-    [map.sourceId],
-  )
-  const activeMovableObstacles = useMemo(
-    () => (map.sourceId === 'procedural' ? [] : MOVABLE_OBSTACLES),
-    [map.sourceId],
-  )
+  const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
+  const activeMovableObstacles = useMemo(() => map.spawnRules.obstacles.movable, [map])
   const spawnObstacles = useMemo(() => [...activeStaticObstacles, ...activeMovableObstacles], [activeStaticObstacles, activeMovableObstacles])
-  const [pickups, setPickups] = useState<Pickup[]>(() => [...INITIAL_PICKUPS])
+  const initialPickups = useMemo(() => map.spawnRules.pickups.initial, [map])
+  const initialDestructibles = useMemo(() => createInitialDestructibles(map), [map])
+  const [pickups, setPickups] = useState<Pickup[]>(() => [...initialPickups])
   const [remoteCars, setRemoteCars] = useState<Record<string, RemoteCarState>>({})
   const [destructibles, setDestructibles] = useState<RuntimeDestructible[]>(() =>
-    INITIAL_DESTRUCTIBLES.map((item, index) => ({
+    initialDestructibles.map((item, index) => ({
       ...item,
       phase: 'intact',
       respawnAt: null,
@@ -1128,7 +1151,7 @@ export const GameScene = ({
   const critterRespawnTimerRef = useRef(0)
   const critterHitCheckTimerRef = useRef(0)
   const critterResetKeyRef = useRef(`${map.id}-${proceduralMapSeed}-${restartToken}`)
-  const pickupsRef = useRef<Pickup[]>(INITIAL_PICKUPS)
+  const pickupsRef = useRef<Pickup[]>(initialPickups)
   const gateInsideRef = useRef<boolean[]>(Array.from({ length: map.gates.length }, () => false))
   const prevDamageRef = useRef(damage)
   const cleanDriveSecondsRef = useRef(0)
@@ -1145,14 +1168,14 @@ export const GameScene = ({
           ? {
               ...item,
               state: 'broken' as const,
-              respawnAt: performance.now() / 1000 + CRITTER_RESPAWN_SECONDS,
+              respawnAt: performance.now() / 1000 + map.spawnRules.hazards.critters.respawnSeconds,
               position,
               burstSeed: item.burstSeed + 1,
             }
           : item,
       ),
     )
-  }, [])
+  }, [map.spawnRules.hazards.critters.respawnSeconds])
 
   const applyPickupCollect = useCallback((pickupId: string) => {
     setPickups((state) => state.filter((pickup) => pickup.id !== pickupId))
@@ -1194,13 +1217,13 @@ export const GameScene = ({
           ? {
               ...item,
               phase: 'broken',
-              respawnAt: performance.now() / 1000 + DESTRUCTIBLE_RESPAWN_SECONDS,
+              respawnAt: performance.now() / 1000 + map.spawnRules.hazards.destructibles.respawnSeconds,
               burstSeed: burstSeed ?? destructibleSeedRef.current++,
             }
           : item,
       ),
     )
-  }, [])
+  }, [map.spawnRules.hazards.destructibles.respawnSeconds])
 
   const breakDestructible = useCallback(
     (id: string) => {
@@ -1291,11 +1314,11 @@ export const GameScene = ({
       playerPositionRef.current = map.startPosition
       lastHeadingPosRef.current = map.startPosition
       headingRef.current = map.startYaw
-      setPickups([...INITIAL_PICKUPS])
-      pickupsRef.current = INITIAL_PICKUPS
+      setPickups([...initialPickups])
+      pickupsRef.current = initialPickups
       destructibleSeedRef.current = 0
       setDestructibles(
-        INITIAL_DESTRUCTIBLES.map((item, index) => ({
+        initialDestructibles.map((item, index) => ({
           ...item,
           phase: 'intact',
           respawnAt: null,
@@ -1347,8 +1370,9 @@ export const GameScene = ({
           y: p[1],
           z: p[2],
           yaw: headingRef.current,
-          color: selectedCarColor,
-          profile: selectedCarProfile,
+          color: vehicleSpec.cosmetics.bodyColor,
+          buildName: vehicleSpec.name,
+          massClass: vehicleSpec.massClass,
           sentAt: performance.now(),
         })
       }
@@ -1384,15 +1408,16 @@ export const GameScene = ({
       return
     }
 
+    const critterRules = map.spawnRules.hazards.critters
     critterHitCheckTimerRef.current += delta
-    if (critterHitCheckTimerRef.current >= CRITTER_HIT_CHECK_INTERVAL) {
+    if (critterRules.enabled && critterHitCheckTimerRef.current >= critterRules.hitCheckInterval) {
       critterHitCheckTimerRef.current = 0
-      const impactSpeedThresholdKph = CRITTER_BREAK_SPEED * 3.6 * 0.75
+      const impactSpeedThresholdKph = critterRules.breakSpeed * 3.6 * 0.75
       if (speedKph >= impactSpeedThresholdKph) {
         const px = playerPositionRef.current[0]
         const py = playerPositionRef.current[1]
         const pz = playerPositionRef.current[2]
-        const hitRadiusSq = CRITTER_HIT_RADIUS * CRITTER_HIT_RADIUS
+        const hitRadiusSq = critterRules.hitRadius * critterRules.hitRadius
         const hitIds: string[] = []
         const hitPositions: Record<string, [number, number, number]> = {}
         for (const critter of critters) {
@@ -1418,7 +1443,7 @@ export const GameScene = ({
                 ? {
                     ...item,
                     state: 'broken' as const,
-                    respawnAt: performance.now() / 1000 + CRITTER_RESPAWN_SECONDS,
+                    respawnAt: performance.now() / 1000 + critterRules.respawnSeconds,
                     position: hitPositions[item.id] ?? item.position,
                     burstSeed: item.burstSeed + 1,
                   }
@@ -1463,9 +1488,10 @@ export const GameScene = ({
       const repairCount = current.filter((pickup) => pickup.type === 'repair').length
       const partCount = current.filter((pickup) => pickup.type === 'part').length
 
-      const missingStars = Math.max(0, MIN_STARS - starCount)
-      const missingRepairs = Math.max(0, MIN_REPAIRS - repairCount)
-      const missingParts = Math.max(0, MIN_PARTS - partCount)
+      const minCounts = map.spawnRules.pickups.minCounts
+      const missingStars = Math.max(0, minCounts.star - starCount)
+      const missingRepairs = Math.max(0, minCounts.repair - repairCount)
+      const missingParts = Math.max(0, minCounts.part - partCount)
 
       if (missingStars === 0 && missingRepairs === 0 && missingParts === 0) {
         return current
@@ -1484,10 +1510,10 @@ export const GameScene = ({
         spawnTypes.push('part')
       }
 
-      if (damage > 50 && missingRepairs === 0 && Math.random() < 0.45) {
+      if (damage > 50 && missingRepairs === 0 && Math.random() < map.spawnRules.pickups.bonusRepairChance) {
         spawnTypes.push('repair')
       }
-      if (damage > 68 && missingParts === 0 && Math.random() < 0.32) {
+      if (damage > 68 && missingParts === 0 && Math.random() < map.spawnRules.pickups.bonusPartChance) {
         spawnTypes.push('part')
       }
 
@@ -1509,9 +1535,10 @@ export const GameScene = ({
     setDestructibles((state) => {
       let changed = false
       const usedPoints = new Set<string>()
+      const destructibleRules = map.spawnRules.hazards.destructibles
       for (const item of state) {
         if (item.phase === 'intact') {
-          const found = DESTRUCTIBLE_SPAWN_POINTS.findIndex(
+          const found = destructibleRules.spawnPoints.findIndex(
             (point) => point[0] === item.position[0] && point[2] === item.position[2],
           )
           if (found >= 0) usedPoints.add(`p-${found}`)
@@ -1521,15 +1548,15 @@ export const GameScene = ({
       const updated = state.map((item) => {
         if (item.phase === 'broken' && item.respawnAt !== null && item.respawnAt <= nowSec) {
           changed = true
-          const point = pickRespawnPoint(usedPoints) ?? item.position
-          const pointIndex = DESTRUCTIBLE_SPAWN_POINTS.findIndex((p) => p[0] === point[0] && p[2] === point[2])
+          const point = pickRespawnPoint(map, usedPoints) ?? item.position
+          const pointIndex = destructibleRules.spawnPoints.findIndex((p) => p[0] === point[0] && p[2] === point[2])
           if (pointIndex >= 0) usedPoints.add(`p-${pointIndex}`)
           const respawned: RuntimeDestructible = {
             ...item,
             phase: 'intact',
             respawnAt: null,
             position: [point[0], 0.7, point[2]] as [number, number, number],
-            color: DESTRUCTIBLE_COLORS[(destructibleSeedRef.current + pointIndex + 1) % DESTRUCTIBLE_COLORS.length],
+            color: destructibleRules.palette[(destructibleSeedRef.current + pointIndex + 1) % destructibleRules.palette.length],
           }
           return respawned
         }
@@ -1586,7 +1613,7 @@ export const GameScene = ({
       ))}
       {destructibles.map((item) =>
         item.phase === 'intact' ? (
-          <IntactDestructible key={`${item.id}-intact`} destructible={item} onBreak={breakDestructible} />
+          <IntactDestructible key={`${item.id}-intact`} destructible={item} map={map} onBreak={breakDestructible} />
         ) : (
           <BrokenDestructible key={`${item.id}-broken-${item.burstSeed}`} id={item.id} position={item.position} color={item.color} burstSeed={item.burstSeed} />
         ),
@@ -1594,7 +1621,7 @@ export const GameScene = ({
       {pickups.map((pickup) => (
         <PickupItem pickup={pickup} lowPowerMode={lowPowerMode} key={pickup.id} />
       ))}
-      {map.shape === 'path'
+      {map.shape === 'path' && map.spawnRules.hazards.critters.enabled
         ? critters.map((critter) => (
             <ForestCritter key={`${critter.id}-${critter.state}-${critter.burstSeed}`} critter={critter} map={map} onBreak={breakCritter} />
           ))
