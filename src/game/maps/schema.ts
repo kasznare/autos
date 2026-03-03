@@ -1,6 +1,6 @@
 import type { Pickup, WorldObstacle } from '../types'
 
-export const MAP_SCHEMA_VERSION = '2.0.0' as const
+export const MAP_SCHEMA_VERSION = '3.0.0' as const
 
 export type MapSchemaVersion = typeof MAP_SCHEMA_VERSION
 
@@ -8,6 +8,8 @@ export type MapId = 'orbital' | 'gaia' | 'titan' | 'procedural'
 export type MapShape = 'ring' | 'path'
 export type SurfaceMaterial = 'asphalt' | 'regolith' | 'ice' | 'basalt' | 'dust'
 export type TerrainProfile = 'flat' | 'rolling' | 'craggy'
+export type MapInteractableCollider = 'fixed' | 'dynamic' | 'none'
+export type MapEnvironmentKind = 'sun' | 'cloud' | 'bird'
 
 export type TrackGate = {
   position: [number, number, number]
@@ -22,6 +24,26 @@ export type TrackTree = {
 }
 
 export type TrackPoint = [number, number]
+
+export type MapInteractable = {
+  id: string
+  kind: 'block' | 'crate' | 'ramp' | 'tower' | 'barrier'
+  position: [number, number, number]
+  size: [number, number, number]
+  rotation?: [number, number, number]
+  material: 'soft' | 'medium' | 'hard'
+  collider: MapInteractableCollider
+  color: string
+}
+
+export type MapEnvironmentObject = {
+  id: string
+  kind: MapEnvironmentKind
+  position: [number, number, number]
+  scale: number
+  color: string
+  speed?: number
+}
 
 export type MaterialZone =
   | {
@@ -100,6 +122,9 @@ export type TrackMap = {
   outerHalf: number
   innerHalf: number
   roadWidth: number
+  laneCount: number
+  laneWidth: number
+  detailDensity: number
   roadPath: TrackPoint[]
   startPosition: [number, number, number]
   startYaw: number
@@ -114,4 +139,6 @@ export type TrackMap = {
   spawnRules: SpawnRules
   gates: TrackGate[]
   trees: TrackTree[]
+  interactables: MapInteractable[]
+  environmentObjects: MapEnvironmentObject[]
 }

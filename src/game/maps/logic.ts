@@ -190,8 +190,8 @@ const generateProceduralTrees = (seed: number, map: TrackMap) => {
   const rand = mulberry32(seed * 23 + 7)
   const trees = []
   const half = map.worldHalf - 3
-  const targetCount = 180
-  for (let i = 0; i < 1000 && trees.length < targetCount; i += 1) {
+  const targetCount = 220
+  for (let i = 0; i < 1200 && trees.length < targetCount; i += 1) {
     const x = (rand() * 2 - 1) * half
     const z = (rand() * 2 - 1) * half
     if (isPathRoadAt(x, z, map.roadPath, map.roadWidth + 4.2)) {
@@ -205,6 +205,30 @@ const generateProceduralTrees = (seed: number, map: TrackMap) => {
   return trees
 }
 
+const generateProceduralInteractables = (seed: number, map: TrackMap) => {
+  const rand = mulberry32(seed * 11 + 17)
+  const interactables: TrackMap['interactables'] = []
+  for (let i = 0; i < 180 && interactables.length < 28; i += 1) {
+    const x = (rand() * 2 - 1) * (map.worldHalf - 14)
+    const z = (rand() * 2 - 1) * (map.worldHalf - 14)
+    if (isPointOnRoad(map, x, z)) {
+      continue
+    }
+    const asRamp = rand() > 0.64
+    interactables.push({
+      id: `proc-int-${seed}-${interactables.length}`,
+      kind: asRamp ? 'ramp' : 'crate',
+      position: [x, asRamp ? 0.56 : 0.52, z],
+      size: asRamp ? [7.8, 1.05, 3.8] : [1, 1, 1],
+      rotation: asRamp ? [0, rand() * Math.PI * 2, 0] : undefined,
+      material: asRamp ? 'medium' : 'soft',
+      collider: asRamp ? 'fixed' : 'dynamic',
+      color: asRamp ? '#b88958' : '#c58f45',
+    })
+  }
+  return interactables
+}
+
 const gateFromPathSegment = (points: TrackPoint[], idx: number) => {
   const a = points[idx % points.length]
   const b = points[(idx + 1) % points.length]
@@ -215,15 +239,16 @@ const gateFromPathSegment = (points: TrackPoint[], idx: number) => {
 }
 
 const createProceduralMap = (seed: number): TrackMap => {
-  const worldHalf = 125
+  const worldHalf = 145
   const roadPath = generateProceduralPath(seed, worldHalf)
-  const roadWidth = 7.2
+  const roadWidth = 10
+  const laneCount = 2
   const start = roadPath[0]
   const next = roadPath[1]
   const startYaw = Math.atan2(next[0] - start[0], next[1] - start[1])
 
   const map: TrackMap = {
-    schemaVersion: '2.0.0',
+    schemaVersion: '3.0.0',
     id: `procedural-${seed}`,
     sourceId: 'procedural',
     label: `Nebula Loop #${seed % 1000}`,
@@ -232,18 +257,21 @@ const createProceduralMap = (seed: number): TrackMap => {
     outerHalf: 0,
     innerHalf: 0,
     roadWidth,
+    laneCount,
+    laneWidth: roadWidth / laneCount,
+    detailDensity: 2.6,
     roadPath,
     startPosition: [start[0], 0.38, start[1]],
     startYaw,
     gravity: [0, -7.8, 0],
     terrain: {
       profile: 'craggy',
-      amplitude: 7.8,
-      frequency: 0.012,
+      amplitude: 8.4,
+      frequency: 0.011,
     },
     materialZones: [
       { id: 'global-dust', shape: 'global', material: 'dust' },
-      { id: 'track-regolith', shape: 'path-band', material: 'regolith', width: 9.4 },
+      { id: 'track-regolith', shape: 'path-band', material: 'regolith', width: 11.4 },
       { id: 'ice-sling', shape: 'circle', material: 'ice', center: [roadPath[5][0], roadPath[5][1]], radius: 8.5 },
     ],
     materialTuning: {
@@ -303,9 +331,18 @@ const createProceduralMap = (seed: number): TrackMap => {
       gateFromPathSegment(roadPath, 18),
     ],
     trees: [],
+    interactables: [],
+    environmentObjects: [
+      { id: 'proc-sun', kind: 'sun', position: [84, 82, -38], scale: 9.1, color: '#ffd483' },
+      { id: 'proc-cloud-a', kind: 'cloud', position: [-36, 56, -92], scale: 1.8, color: '#f3f9ff', speed: 0.62 },
+      { id: 'proc-cloud-b', kind: 'cloud', position: [58, 52, 68], scale: 1.45, color: '#eaf5ff', speed: 0.45 },
+      { id: 'proc-bird-a', kind: 'bird', position: [0, 39, 0], scale: 1.2, color: '#2f3b4b', speed: 1.52 },
+      { id: 'proc-bird-b', kind: 'bird', position: [-26, 35, 39], scale: 1.04, color: '#334153', speed: 1.26 },
+    ],
   }
 
   map.trees = generateProceduralTrees(seed, map)
+  map.interactables = generateProceduralInteractables(seed, map)
   return map
 }
 
@@ -327,4 +364,25 @@ export const createInitialDestructibles = (map: TrackMap): DestructibleProp[] =>
     position,
     color: palette[index % palette.length],
   }))
+}
+
+export const getRoadDetailCount = (map: TrackMap) =>
+  Math.max(24, Math.round((map.shape === 'path' ? 160 : 70) * map.detailDensity))
+
+export const getLaneOffset = (map: TrackMap, laneIndex: number) => {
+  const count = Math.max(1, map.laneCount)
+  const laneWidth = map.laneWidth > 0 ? map.laneWidth : map.roadWidth / count
+  return (laneIndex - (count - 1) / 2) * laneWidth
+}
+
+export const getRingLaneGuideHalfSizes = (map: TrackMap) => {
+  if (map.shape !== 'ring' || map.laneCount <= 1) {
+    return []
+  }
+  const laneWidth = Math.max(0.2, map.laneWidth)
+  const guides: number[] = []
+  for (let i = 1; i < map.laneCount; i += 1) {
+    guides.push(map.innerHalf + laneWidth * i)
+  }
+  return guides
 }

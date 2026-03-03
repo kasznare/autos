@@ -53,6 +53,17 @@ export const sampleLoop = (points: [number, number][], tRaw: number) => {
   return { x: a[0], z: a[1], yaw: Math.atan2(b[0] - a[0], b[1] - a[1]) }
 }
 
+export const sampleLoopWithOffset = (points: [number, number][], tRaw: number, laneOffset: number) => {
+  const base = sampleLoop(points, tRaw)
+  const nx = Math.cos(base.yaw)
+  const nz = -Math.sin(base.yaw)
+  return {
+    x: base.x + nx * laneOffset,
+    z: base.z + nz * laneOffset,
+    yaw: base.yaw,
+  }
+}
+
 export const getClosestProgressOnLoop = (points: [number, number][], x: number, z: number) => {
   if (points.length < 2) {
     return { progress: 0, distance: Infinity }
@@ -88,4 +99,3 @@ export const getClosestProgressOnLoop = (points: [number, number][], x: number, 
 
 export const isPlayerOnTrafficPath = (map: TrackMap, x: number, z: number, laneDistance: number) =>
   isPointOnRoad(map, x, z) && laneDistance <= map.roadWidth * 0.6
-

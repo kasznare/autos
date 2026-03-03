@@ -20,6 +20,18 @@ export const validateMapConfig = (map: TrackMap): string[] => {
   if (map.worldHalf <= 0 || map.roadWidth <= 0) {
     errors.push(`${idTag} worldHalf and roadWidth must be > 0`)
   }
+  if (map.laneCount < 1 || !Number.isInteger(map.laneCount)) {
+    errors.push(`${idTag} laneCount must be an integer >= 1`)
+  }
+  if (map.laneWidth <= 0) {
+    errors.push(`${idTag} laneWidth must be > 0`)
+  }
+  if (Math.abs(map.laneWidth * map.laneCount - map.roadWidth) > 0.2) {
+    errors.push(`${idTag} laneWidth * laneCount should match roadWidth`)
+  }
+  if (map.detailDensity <= 0) {
+    errors.push(`${idTag} detailDensity must be > 0`)
+  }
   if (map.shape === 'ring' && !(map.outerHalf > map.innerHalf && map.innerHalf > 0)) {
     errors.push(`${idTag} ring maps require outerHalf > innerHalf > 0`)
   }
@@ -80,6 +92,31 @@ export const validateMapConfig = (map: TrackMap): string[] => {
   if (map.materialZones.length === 0 || map.materialZones[0].shape !== 'global') {
     errors.push(`${idTag} first material zone must be a global fallback`)
   }
+
+  const interactableIds = new Set<string>()
+  map.interactables.forEach((item) => {
+    if (interactableIds.has(item.id)) {
+      errors.push(`${idTag} duplicate interactable id ${item.id}`)
+    }
+    interactableIds.add(item.id)
+    if (!withinWorld(item.position[0], item.position[2])) {
+      errors.push(`${idTag} interactable ${item.id} outside world bounds`)
+    }
+    if (item.size[0] <= 0 || item.size[1] <= 0 || item.size[2] <= 0) {
+      errors.push(`${idTag} interactable ${item.id} has invalid size`)
+    }
+  })
+
+  const envIds = new Set<string>()
+  map.environmentObjects.forEach((item) => {
+    if (envIds.has(item.id)) {
+      errors.push(`${idTag} duplicate environment object id ${item.id}`)
+    }
+    envIds.add(item.id)
+    if (item.scale <= 0) {
+      errors.push(`${idTag} environment object ${item.id} must have scale > 0`)
+    }
+  })
 
   return errors
 }
