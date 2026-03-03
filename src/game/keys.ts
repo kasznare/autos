@@ -3,6 +3,7 @@ export type DriveInputState = {
   backward: boolean
   left: boolean
   right: boolean
+  jump: boolean
   restart: boolean
 }
 
@@ -11,6 +12,7 @@ export const createInputState = (): DriveInputState => ({
   backward: false,
   left: false,
   right: false,
+  jump: false,
   restart: false,
 })
 
@@ -22,7 +24,8 @@ export const keyCodeToInput = (code: string): keyof DriveInputState | null => {
   if (code === 'ArrowDown' || code === 'KeyS') return 'backward'
   if (code === 'ArrowLeft' || code === 'KeyA') return 'left'
   if (code === 'ArrowRight' || code === 'KeyD') return 'right'
-  if (code === 'Space' || code === 'KeyR') return 'restart'
+  if (code === 'Space') return 'jump'
+  if (code === 'KeyR') return 'restart'
   return null
 }
 
@@ -42,6 +45,7 @@ export const resetVirtualInput = () => {
   virtualInputState.backward = false
   virtualInputState.left = false
   virtualInputState.right = false
+  virtualInputState.jump = false
   virtualInputState.restart = false
 }
 
@@ -54,6 +58,7 @@ export const resetGamepadInput = () => {
   gamepadInputState.backward = false
   gamepadInputState.left = false
   gamepadInputState.right = false
+  gamepadInputState.jump = false
   gamepadInputState.restart = false
 }
 
@@ -62,5 +67,6 @@ export const getMergedInput = (keyboardState: DriveInputState): DriveInputState 
   backward: keyboardState.backward || virtualInputState.backward || gamepadInputState.backward,
   left: keyboardState.left || virtualInputState.left || gamepadInputState.left,
   right: keyboardState.right || virtualInputState.right || gamepadInputState.right,
+  jump: keyboardState.jump || virtualInputState.jump || gamepadInputState.jump,
   restart: keyboardState.restart || virtualInputState.restart || gamepadInputState.restart,
 })

@@ -43,7 +43,10 @@ const resolveZone = (localX: number, localZ: number): PartZoneIdV2 => {
 
 export const evaluateImpactDamageV2 = ({
   vehicleMass,
+  otherMass,
   planarSpeed,
+  relativePlanarSpeed,
+  relativeSpeed,
   verticalSpeed,
   forwardAlignment,
   armorScale,
@@ -55,8 +58,10 @@ export const evaluateImpactDamageV2 = ({
 }: ImpactDamageEvaluationInputV2): ImpactDamageEvaluationV2 => {
   const sourceMaterial = parseCollisionMaterial(otherBodyName)
   const response = getMaterialResponseV2(sourceMaterial)
-  const speed = clamp(planarSpeed, 0, 50)
-  const kineticEnergy = 0.5 * Math.max(0.8, vehicleMass) * speed * speed
+  const speed = clamp(Math.max(planarSpeed, relativePlanarSpeed), 0, 50)
+  const effectiveOtherMass = Number.isFinite(otherMass) && otherMass > 0 ? otherMass : Math.max(0.8, vehicleMass)
+  const reducedMass = (Math.max(0.8, vehicleMass) * effectiveOtherMass) / Math.max(0.001, Math.max(0.8, vehicleMass) + effectiveOtherMass)
+  const kineticEnergy = 0.5 * reducedMass * speed * speed
   const verticalFactor = 1 + clamp(verticalSpeed / 8, 0, 0.4)
   const angleFactor = 0.58 + clamp(forwardAlignment, 0, 1) * 0.7
   const energyJoules = kineticEnergy * angleFactor * verticalFactor
@@ -66,7 +71,7 @@ export const evaluateImpactDamageV2 = ({
   const baseDamage = Math.max(1, (energyJoules / 100) * response.damageScale)
   const scaledDamage = baseDamage * profileDamageScale * kidDamageScale * armorScale
   const damageDelta = Math.max(0, Math.round(clamp(scaledDamage, 0, 72)))
-  const impulse = clamp(speed * response.impactSharpness, 0, 18)
+  const impulse = clamp(Math.max(0, relativeSpeed) * reducedMass * 0.85 * response.impactSharpness, 0, 18)
 
   return {
     material: normalizeCollisionMaterialV2(sourceMaterial),
@@ -78,6 +83,6 @@ export const evaluateImpactDamageV2 = ({
     impulse,
     damageDelta,
     nextPartState: getPartStateForDamage(damageDelta),
-    skipDamage: damageDelta <= 0 || (sourceMaterial === 'rubber' && planarSpeed < 7.2 && verticalSpeed < 2.4),
+    skipDamage: damageDelta <= 0 || (sourceMaterial === 'rubber' && relativePlanarSpeed < 7.2 && verticalSpeed < 2.4),
   }
 }

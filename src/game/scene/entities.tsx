@@ -22,6 +22,15 @@ export type RemoteCarState = CarSnapshot & {
   snapshots: Array<{ x: number; y: number; z: number; yaw: number; t: number }>
 }
 
+const getObstacleMass = (obstacle: WorldObstacle) => {
+  if (typeof obstacle.mass === 'number' && Number.isFinite(obstacle.mass) && obstacle.mass > 0) {
+    return obstacle.mass
+  }
+  const volume = Math.max(0.08, obstacle.size[0] * obstacle.size[1] * obstacle.size[2])
+  const density = obstacle.material === 'hard' ? 1.35 : obstacle.material === 'medium' ? 0.8 : 0.42
+  return volume * density
+}
+
 export const TrafficCars = ({
   map,
   lowPowerMode,
@@ -245,17 +254,21 @@ export const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
   const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
   return (
     <RigidBody
-      type="fixed"
       colliders={false}
+      position={obstacle.position}
+      mass={getObstacleMass(obstacle)}
       friction={response.friction}
       restitution={response.restitution}
+      linearDamping={1.2}
+      angularDamping={2.2}
+      enabledRotations={[false, false, false]}
       name={`${obstacle.material}-${obstacle.id}`}
     >
-      <mesh position={obstacle.position} castShadow receiveShadow>
+      <mesh castShadow receiveShadow>
         <boxGeometry args={obstacle.size} />
         <meshStandardMaterial color={obstacle.color} />
       </mesh>
-      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
+      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
     </RigidBody>
   )
 }
@@ -266,11 +279,12 @@ export const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
     <RigidBody
       colliders={false}
       position={obstacle.position}
-      mass={0.5}
+      mass={getObstacleMass(obstacle)}
       friction={response.friction}
       restitution={response.restitution}
-      linearDamping={0.9}
-      angularDamping={0.85}
+      linearDamping={0.45}
+      angularDamping={0.6}
+      enabledRotations={[true, true, true]}
       name={`${obstacle.material}-${obstacle.id}`}
     >
       <mesh castShadow receiveShadow>
@@ -411,4 +425,3 @@ export const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPower
     </group>
   )
 }
-

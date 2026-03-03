@@ -56,6 +56,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const hardContactCountRef = useRef(0)
   const scrapeDamageTimerRef = useRef(0)
   const armorTimerRef = useRef(0)
+  const jumpCooldownTimerRef = useRef(0)
+  const jumpGuardTimerRef = useRef(0)
+  const jumpHeldRef = useRef(false)
+  const lastGroundedAtRef = useRef(0)
   const zoneDamageRef = useRef<Record<PartZoneIdV2, number>>({ front: 0, rear: 0, left: 0, right: 0 })
   const zoneStateRef = useRef<Record<PartZoneIdV2, PartDamageStateV2>>({
     front: 'intact',
@@ -131,6 +135,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     hardContactCountRef.current = 0
     scrapeDamageTimerRef.current = 0
     armorTimerRef.current = 0
+    jumpCooldownTimerRef.current = 0
+    jumpGuardTimerRef.current = 0
+    jumpHeldRef.current = false
+    lastGroundedAtRef.current = performance.now() / 1000
     zoneDamageRef.current = { front: 0, rear: 0, left: 0, right: 0 }
     zoneStateRef.current = { front: 'intact', rear: 'intact', left: 'intact', right: 'intact' }
     disabledEmittedRef.current = false
@@ -141,6 +149,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       speedKph: 0,
       steeringDeg: 0,
       slipRatio: 0,
+      jumpState: 'grounded',
+      jumpCooldownRemaining: 0,
       latestImpactImpulse: 0,
       latestImpactTier: 'minor',
       latestImpactMaterial: 'rubber',
@@ -225,6 +235,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         speedKph: 0,
         steeringDeg: 0,
         slipRatio: 0,
+        jumpState: 'grounded',
+        jumpCooldownRemaining: jumpCooldownTimerRef.current,
         hardContactCount: hardContactCountRef.current,
         nanGuardTrips: nanGuardTripsRef.current,
         speedClampTrips: speedClampTripsRef.current,
@@ -253,6 +265,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       stuckSteerTimerRef,
       hardContactCountRef,
       scrapeDamageTimerRef,
+      jumpCooldownTimerRef,
+      jumpGuardTimerRef,
+      jumpHeldRef,
+      lastGroundedAtRef,
       nanGuardTripsRef,
       speedClampTripsRef,
       setTelemetry,
@@ -340,6 +356,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         }
         const hitAt = handlePlayerCollisionEnter({
           body,
+          otherBody: payload.other.rigidBody,
           otherBodyName,
           otherPosition: payload.other.rigidBody?.translation?.(),
           now,
