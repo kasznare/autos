@@ -9,7 +9,10 @@ import {
   ForestCritter,
   Ground,
   IntactDestructible,
+  MapEnvironment,
+  MapInteractables,
   MovableObstacle,
+  PathLaneMarkers,
   PickupItem,
   ProceduralGround,
   RemoteCar,
@@ -53,7 +56,24 @@ export const GameScene = ({
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
   const activeMovableObstacles = useMemo(() => map.spawnRules.obstacles.movable, [map])
-  const spawnObstacles = useMemo(() => [...activeStaticObstacles, ...activeMovableObstacles], [activeStaticObstacles, activeMovableObstacles])
+  const mapSpawnObstacles = useMemo(
+    () =>
+      map.interactables
+        .filter((item) => item.collider !== 'none')
+        .map((item) => ({
+          id: item.id,
+          position: item.position,
+          size: item.size,
+          material: item.material,
+          movable: item.collider === 'dynamic',
+          color: item.color,
+        })),
+    [map.interactables],
+  )
+  const spawnObstacles = useMemo(
+    () => [...activeStaticObstacles, ...activeMovableObstacles, ...mapSpawnObstacles],
+    [activeStaticObstacles, activeMovableObstacles, mapSpawnObstacles],
+  )
   const initialPickups = useMemo(() => map.spawnRules.pickups.initial, [map])
   const initialDestructibles = useMemo<RuntimeDestructible[]>(
     () =>
@@ -124,9 +144,16 @@ export const GameScene = ({
         <ProceduralGround map={map} terrainSegments={qualityConfig.terrainSegments} />
       )}
       <CheckpointGates gates={map.gates} />
-      {map.shape === 'path' ? <RoadPath map={map} terrainSegments={qualityConfig.terrainSegments} /> : null}
+      {map.shape === 'path' ? (
+        <>
+          <RoadPath map={map} terrainSegments={qualityConfig.terrainSegments} />
+          <PathLaneMarkers map={map} />
+        </>
+      ) : null}
       <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} density={qualityConfig.roadsideDensity} castShadows={qualityTier === 'high'} />
       <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />
+      <MapEnvironment objects={map.environmentObjects} restartToken={restartToken} />
+      <MapInteractables map={map} restartToken={restartToken} />
       {map.shape === 'path' ? (
         <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} updateHz={qualityConfig.trafficUpdateHz} />
       ) : null}

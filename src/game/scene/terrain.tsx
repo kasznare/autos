@@ -304,6 +304,60 @@ export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegme
   )
 }
 
+export const PathLaneMarkers = ({ map }: { map: TrackMap }) => {
+  const markers = useMemo(() => {
+    if (map.shape !== 'path' || map.roadPath.length < 2 || map.laneCount <= 1) {
+      return []
+    }
+    const laneWidth = map.laneWidth > 0 ? map.laneWidth : map.roadWidth / map.laneCount
+    const dashLen = Math.max(2.8, laneWidth * 0.9)
+    const gapLen = Math.max(2.2, laneWidth * 0.7)
+    const stride = dashLen + gapLen
+    const out: Array<{ id: string; position: [number, number, number]; rotation: [number, number, number]; length: number }> = []
+
+    for (let i = 0; i < map.roadPath.length; i += 1) {
+      const a = map.roadPath[i]
+      const b = map.roadPath[(i + 1) % map.roadPath.length]
+      const dx = b[0] - a[0]
+      const dz = b[1] - a[1]
+      const segLen = Math.hypot(dx, dz)
+      if (segLen < 0.001) {
+        continue
+      }
+      const dirX = dx / segLen
+      const dirZ = dz / segLen
+      const normalX = dirZ
+      const normalZ = -dirX
+      const yaw = Math.atan2(dx, dz)
+      for (let lane = 1; lane < map.laneCount; lane += 1) {
+        const offset = -map.roadWidth * 0.5 + laneWidth * lane
+        for (let along = 0.7; along < segLen - 0.7; along += stride) {
+          const x = a[0] + dirX * along + normalX * offset
+          const z = a[1] + dirZ * along + normalZ * offset
+          out.push({
+            id: `lane-${i}-${lane}-${Math.round(along * 10)}`,
+            position: [x, sampleTerrainHeight(map, x, z) + 0.05, z],
+            rotation: [0, yaw, 0],
+            length: Math.min(dashLen, segLen - along),
+          })
+        }
+      }
+    }
+    return out
+  }, [map])
+
+  return (
+    <group>
+      {markers.map((marker) => (
+        <mesh key={marker.id} position={marker.position} rotation={marker.rotation} receiveShadow>
+          <boxGeometry args={[0.18, 0.03, marker.length]} />
+          <meshStandardMaterial color="#f8f4dc" roughness={0.52} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
   const render = useRenderSettings()
   const { camera } = useThree()

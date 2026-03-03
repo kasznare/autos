@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
+import { MAP_LABELS, MAP_ORDER } from './maps'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
 
@@ -57,6 +58,7 @@ export const Hud = ({
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const mission = useGameStore((state) => state.mission)
+  const selectedMapId = useGameStore((state) => state.selectedMapId)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const physicsTelemetry = useGameStore((state) => state.physicsTelemetry)
@@ -64,6 +66,8 @@ export const Hud = ({
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
+  const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
+  const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
   useEffect(() => {
@@ -126,6 +130,27 @@ export const Hud = ({
           <div className="mission-track" role="progressbar" aria-valuemin={0} aria-valuemax={mission.target} aria-valuenow={mission.progress}>
             <div className="mission-fill" style={{ width: `${Math.min(100, (mission.progress / Math.max(1, mission.target)) * 100)}%` }} />
           </div>
+        </div>
+        <div className="map-picker">
+          <div className="map-picker-header">
+            <span>Map</span>
+            <strong>{MAP_LABELS[selectedMapId]}</strong>
+          </div>
+          {MAP_ORDER.map((mapId) => (
+            <button
+              key={mapId}
+              type="button"
+              className={`map-chip${selectedMapId === mapId ? ' active' : ''}`}
+              onClick={() => setSelectedMapId(mapId)}
+            >
+              {MAP_LABELS[mapId]}
+            </button>
+          ))}
+          {selectedMapId === 'procedural' ? (
+            <button type="button" className="map-reroll" onClick={rerollProceduralMap}>
+              New
+            </button>
+          ) : null}
         </div>
         <div className="multiplayer-row">
           <span className="multiplayer-state">Controller: {gamepadConnected ? 'Connected' : 'Not Connected'}</span>

@@ -2,7 +2,6 @@ import { OrbitControls } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
 import { useEffect } from 'react'
 import { CarModel } from '../../CarModel'
-import { MAP_LABELS, MAP_ORDER } from '../../maps'
 import type { RenderMode, RenderQualityTier } from '../../store/types'
 import { useGameStore } from '../../store'
 import { VehicleBuilder } from './VehicleBuilder'
@@ -51,7 +50,6 @@ export const GarageOverlay = ({
   onCreateRoom: () => void
 }) => {
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
-  const selectedMapId = useGameStore((state) => state.selectedMapId)
   const renderMode = useGameStore((state) => state.renderMode)
   const renderQualityTier = useGameStore((state) => state.renderQualityTier)
   const renderWireframe = useGameStore((state) => state.renderWireframe)
@@ -59,8 +57,6 @@ export const GarageOverlay = ({
   const setRenderMode = useGameStore((state) => state.setRenderMode)
   const setRenderQualityTier = useGameStore((state) => state.setRenderQualityTier)
   const setRenderWireframe = useGameStore((state) => state.setRenderWireframe)
-  const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
-  const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
   const resetMapSetup = useGameStore((state) => state.resetMapSetup)
   const resetUiSetup = useGameStore((state) => state.resetUiSetup)
   const resetVehicleSetup = useGameStore((state) => state.resetVehicleSetup)
@@ -206,24 +202,6 @@ export const GarageOverlay = ({
                   </div>
                 </div>
               ) : null}
-
-              <div className="map-picker">
-                {MAP_ORDER.map((mapId) => (
-                  <button
-                    key={mapId}
-                    type="button"
-                    className={`map-chip${selectedMapId === mapId ? ' active' : ''}`}
-                    onClick={() => setSelectedMapId(mapId)}
-                  >
-                    {MAP_LABELS[mapId]}
-                  </button>
-                ))}
-                {selectedMapId === 'procedural' ? (
-                  <button type="button" className="map-reroll" onClick={rerollProceduralMap}>
-                    New
-                  </button>
-                ) : null}
-              </div>
 
               <div className="multiplayer-row">
                 <span className="multiplayer-state">
