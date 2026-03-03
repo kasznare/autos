@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { useEffect, useMemo, useState } from 'react'
 import { GameScene } from './game/GameScene'
+import { getTrackMap } from './game/maps'
 import { createRoomId, getRoomIdFromUrl, isMultiplayerConfigured, setRoomIdInUrl } from './game/multiplayer'
 import { stopEngineSound } from './game/sfx'
 import { useGameStore } from './game/store'
@@ -13,6 +14,8 @@ export const App = () => {
   const [tabInactive, setTabInactive] = useState(() => (typeof document !== 'undefined' ? document.hidden : false))
   const [roomId, setRoomId] = useState<string | null>(() => getRoomIdFromUrl())
   const [isRoomHost, setIsRoomHost] = useState(false)
+  const selectedMapId = useGameStore((state) => state.selectedMapId)
+  const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
 
   const touchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -22,6 +25,10 @@ export const App = () => {
   }, [])
   const lowPowerMode = batterySaverMode === 'on' || (batterySaverMode === 'auto' && touchDevice)
   const paused = manualPaused || tabInactive
+  const mapGravity = useMemo(
+    () => getTrackMap(selectedMapId, proceduralMapSeed).gravity,
+    [selectedMapId, proceduralMapSeed],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -81,7 +88,7 @@ export const App = () => {
       >
         <color attach="background" args={['#8cd3f0']} />
         <fog attach="fog" args={['#8cd3f0', 25, 80]} />
-        <Physics gravity={[0, -12, 0]}>
+        <Physics gravity={mapGravity}>
           <GameScene lowPowerMode={lowPowerMode} roomId={roomId} isRoomHost={isRoomHost} />
         </Physics>
       </Canvas>

@@ -89,7 +89,7 @@ export const useGameStore = create<GameState>((set) => ({
   restartToken: 0,
   engineMuted: true,
   batterySaverMode: 'auto',
-  selectedMapId: 'city',
+  selectedMapId: 'gaia',
   proceduralMapSeed: 1,
   selectedCarColor: CAR_COLOR_OPTIONS[0],
   selectedCarProfile: 'steady',

@@ -6,7 +6,7 @@ import { Color, Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
 import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput, resetGamepadInput, setGamepadInput } from './keys'
-import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
+import { getMaterialTuningAt, getSurfaceMaterialAt, getTrackMap, sampleTerrainHeight } from './maps'
 import { emitPhysicsEventV2, evaluateImpactDamageV2, normalizeCollisionMaterialV2 } from './physics'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
@@ -409,8 +409,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const rightZ = -Math.sin(yaw)
     const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
     const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
-    const onRoad = isPointOnRoad(map, pos.x, pos.z)
-    const surfaceConfig = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
+    const surfaceMaterial = getSurfaceMaterialAt(map, pos.x, pos.z)
+    const materialTuning = getMaterialTuningAt(map, pos.x, pos.z)
+    const onRoad = surfaceMaterial === 'asphalt' || surfaceMaterial === 'basalt' || surfaceMaterial === 'regolith'
+    const baseSurface = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
+    const surfaceConfig = {
+      ...baseSurface,
+      gripFactor: baseSurface.gripFactor * materialTuning.tractionMultiplier,
+      forwardTopSpeed: baseSurface.forwardTopSpeed * materialTuning.topSpeedMultiplier,
+      reverseTopSpeed: baseSurface.reverseTopSpeed * materialTuning.topSpeedMultiplier,
+      forwardAcceleration: baseSurface.forwardAcceleration / materialTuning.dragMultiplier,
+      reverseAcceleration: baseSurface.reverseAcceleration / materialTuning.dragMultiplier,
+    }
     const damageRatio = Math.min(1, damage / MAX_DAMAGE)
     const accelScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.accelerationLoss
     const speedScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.topSpeedLoss
