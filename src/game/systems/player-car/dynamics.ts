@@ -1,7 +1,7 @@
 import type { RapierRigidBody } from '@react-three/rapier'
 import type { Camera, Group, Vector3 } from 'three'
-import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, VEHICLE_PHYSICS } from '../../config'
-import { getMaterialTuningAt, getSurfaceMaterialAt, type TrackMap } from '../../maps'
+import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DRIVE_SURFACE, JUMP_TUNING, KID_TUNING, MAX_DAMAGE, VEHICLE_PHYSICS } from '../../config'
+import { getMaterialTuningAt, getSurfaceMaterialAt, sampleTerrainHeight, type TrackMap } from '../../maps'
 import { updateEngineSound } from '../../sfx'
 import type { DriveInputState } from '../../keys'
 import type { Pickup, VehiclePhysicsTuning } from '../../types'
@@ -15,6 +15,8 @@ type TelemetryFns = {
     speedKph?: number
     steeringDeg?: number
     slipRatio?: number
+    jumpState?: 'grounded' | 'airborne' | 'cooldown'
+    jumpCooldownRemaining?: number
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
@@ -76,6 +78,8 @@ export const resetBodyPoseAndTelemetry = ({
     speedKph: 0,
     steeringDeg: 0,
     slipRatio: 0,
+    jumpState: 'grounded',
+    jumpCooldownRemaining: 0,
     hardContactCount: hardContactCountRef.current,
     nanGuardTrips: nanGuardTripsRef.current,
     speedClampTrips: speedClampTripsRef.current,
@@ -338,6 +342,10 @@ type DynamicsParams = {
   stuckSteerTimerRef: MutableRef<number>
   hardContactCountRef: MutableRef<number>
   scrapeDamageTimerRef: MutableRef<number>
+  jumpCooldownTimerRef: MutableRef<number>
+  jumpGuardTimerRef: MutableRef<number>
+  jumpHeldRef: MutableRef<boolean>
+  lastGroundedAtRef: MutableRef<number>
   nanGuardTripsRef: MutableRef<number>
   speedClampTripsRef: MutableRef<number>
   setTelemetry: (speedKph: number, steeringDeg: number) => void
@@ -345,6 +353,8 @@ type DynamicsParams = {
     speedKph?: number
     steeringDeg?: number
     slipRatio?: number
+    jumpState?: 'grounded' | 'airborne' | 'cooldown'
+    jumpCooldownRemaining?: number
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
@@ -371,6 +381,10 @@ export const runVehicleDynamicsStep = ({
   stuckSteerTimerRef,
   hardContactCountRef,
   scrapeDamageTimerRef,
+  jumpCooldownTimerRef,
+  jumpGuardTimerRef,
+  jumpHeldRef,
+  lastGroundedAtRef,
   nanGuardTripsRef,
   speedClampTripsRef,
   setTelemetry,
@@ -383,6 +397,8 @@ export const runVehicleDynamicsStep = ({
   const pos = body.translation()
   const linVel = body.linvel()
   armorTimerRef.current = Math.max(0, armorTimerRef.current - delta)
+  jumpCooldownTimerRef.current = Math.max(0, jumpCooldownTimerRef.current - delta)
+  jumpGuardTimerRef.current = Math.max(0, jumpGuardTimerRef.current - delta)
   const armorActive = armorTimerRef.current > 0
   const rotation = body.rotation()
   const yaw = Math.atan2(
@@ -412,6 +428,42 @@ export const runVehicleDynamicsStep = ({
   const speedScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.topSpeedLoss
   const steeringScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.steeringLoss
   const gripScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.gripLoss
+  const driveMass = Math.max(0.8, body.mass())
+
+  const terrainHeight = sampleTerrainHeight(map, pos.x, pos.z)
+  const targetRideY = terrainHeight + VEHICLE_PHYSICS.suspensionRideHeight
+  const groundDistance = pos.y - targetRideY
+  const nearGround = groundDistance <= VEHICLE_PHYSICS.groundingHeightBias
+  const grounded = nearGround && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
+  const nowSec = performance.now() / 1000
+  if (grounded) {
+    lastGroundedAtRef.current = nowSec
+  }
+  const coyoteActive = nowSec - lastGroundedAtRef.current <= JUMP_TUNING.coyoteSec
+  const jumpPressed = input.jump && !jumpHeldRef.current
+  if (jumpPressed && jumpCooldownTimerRef.current <= 0 && jumpGuardTimerRef.current <= 0 && (grounded || coyoteActive)) {
+    const jumpDelta = Math.max(0, JUMP_TUNING.impulse - linVel.y)
+    if (jumpDelta > 0.001) {
+      body.applyImpulse({ x: 0, y: jumpDelta * driveMass, z: 0 }, true)
+    }
+    jumpCooldownTimerRef.current = JUMP_TUNING.cooldownSec
+    jumpGuardTimerRef.current = JUMP_TUNING.antiSpamGuardSec
+  }
+  jumpHeldRef.current = input.jump
+
+  const jumpState = grounded ? (jumpCooldownTimerRef.current > 0.001 ? 'cooldown' : 'grounded') : 'airborne'
+  if (groundDistance < 1.4) {
+    const spring = VEHICLE_PHYSICS.suspensionSpring
+    const damping = VEHICLE_PHYSICS.suspensionDamping
+    const accel = (targetRideY - pos.y) * spring - linVel.y * damping
+    const impulseY = Math.max(
+      -VEHICLE_PHYSICS.suspensionImpulseClamp,
+      Math.min(VEHICLE_PHYSICS.suspensionImpulseClamp, accel * driveMass * delta),
+    )
+    if (Number.isFinite(impulseY) && Math.abs(impulseY) > 0.0001) {
+      body.applyImpulse({ x: 0, y: impulseY, z: 0 }, true)
+    }
+  }
 
   const throttle = Number(input.forward) - Number(input.backward)
   const criticalDamage = damage >= DAMAGE_DRIVE_EFFECTS.criticalThreshold
@@ -459,6 +511,9 @@ export const runVehicleDynamicsStep = ({
   const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * vehiclePhysicsTuning.topSpeedMult
   const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * vehiclePhysicsTuning.reverseSpeedMult * 1.2
   nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
+  if (!Number.isFinite(nextForwardSpeed)) {
+    nextForwardSpeed = 0
+  }
 
   const gripLerp = Math.min(
     1,
@@ -480,7 +535,7 @@ export const runVehicleDynamicsStep = ({
     vehiclePhysicsTuning.steeringMult
   const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
   steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
-  const reverseSteer = nextForwardSpeed < -0.15 ? 0.55 : 1
+  const reverseSteer = nextForwardSpeed < -0.15 ? -0.55 : 1
   const targetYawRate =
     ((nextForwardSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) * Math.tan(steerAngleRef.current) * reverseSteer) /
     Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
@@ -502,12 +557,40 @@ export const runVehicleDynamicsStep = ({
   }
   const yawError = normalizeAngleDelta(nextYaw - yaw)
   const yawRateError = targetYawRate - angVel.y
+  const normalSampleOffset = 0.9
+  const hLeft = sampleTerrainHeight(map, pos.x - normalSampleOffset, pos.z)
+  const hRight = sampleTerrainHeight(map, pos.x + normalSampleOffset, pos.z)
+  const hForward = sampleTerrainHeight(map, pos.x, pos.z + normalSampleOffset)
+  const hBackward = sampleTerrainHeight(map, pos.x, pos.z - normalSampleOffset)
+  let nx = hLeft - hRight
+  let ny = normalSampleOffset * 2
+  let nz = hBackward - hForward
+  const nMag = Math.hypot(nx, ny, nz) || 1
+  nx /= nMag
+  ny /= nMag
+  nz /= nMag
+  if (ny < 0) {
+    nx *= -1
+    ny *= -1
+    nz *= -1
+  }
+  let upX = 2 * (rotation.x * rotation.y - rotation.w * rotation.z)
+  let upY = 1 - 2 * (rotation.x * rotation.x + rotation.z * rotation.z)
+  let upZ = 2 * (rotation.y * rotation.z + rotation.w * rotation.x)
+  const upMag = Math.hypot(upX, upY, upZ) || 1
+  upX /= upMag
+  upY /= upMag
+  upZ /= upMag
+  const alignAxisX = upY * nz - upZ * ny
+  const alignAxisZ = upX * ny - upY * nx
+  const alignBlend = Math.max(0, Math.min(1, 1 - groundDistance / 1.4))
+  const alignStrength = VEHICLE_PHYSICS.slopeAlignTorque * alignBlend
 
   body.applyTorqueImpulse(
     {
-      x: -angVel.x * 0.14,
+      x: alignAxisX * alignStrength - angVel.x * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend),
       y: yawError * (1.8 + Math.abs(nextForwardSpeed) * 0.32) + yawRateError * 0.9,
-      z: -angVel.z * 0.14,
+      z: alignAxisZ * alignStrength - angVel.z * (0.14 + VEHICLE_PHYSICS.slopeAlignDamping * alignBlend),
     },
     true,
   )
@@ -516,6 +599,8 @@ export const runVehicleDynamicsStep = ({
     speedKph: Math.abs(nextForwardSpeed) * 3.6,
     steeringDeg: (steerAngleRef.current * 180) / Math.PI,
     slipRatio: Math.min(1, Math.abs(nextLateralSpeed) / Math.max(0.1, Math.abs(nextForwardSpeed) + Math.abs(nextLateralSpeed))),
+    jumpState,
+    jumpCooldownRemaining: jumpCooldownTimerRef.current,
     hardContactCount: hardContactCountRef.current,
     nanGuardTrips: nanGuardTripsRef.current,
     speedClampTrips: speedClampTripsRef.current,
@@ -529,7 +614,6 @@ export const runVehicleDynamicsStep = ({
   const moveRightZ = -Math.sin(nextYaw)
   const deltaForward = nextForwardSpeed - forwardSpeed
   const deltaLateral = nextLateralSpeed - lateralSpeed
-  const driveMass = Math.max(0.8, body.mass())
   body.applyImpulse(
     {
       x: (moveForwardX * deltaForward + moveRightX * deltaLateral) * driveMass,
@@ -538,6 +622,10 @@ export const runVehicleDynamicsStep = ({
     },
     true,
   )
+  const postDriveVel = body.linvel()
+  if (postDriveVel.y > JUMP_TUNING.maxUpliftSpeed) {
+    body.setLinvel({ x: postDriveVel.x, y: JUMP_TUNING.maxUpliftSpeed, z: postDriveVel.z }, true)
+  }
 
   const postVel = body.linvel()
   if (hardContactCountRef.current > 0 && Math.abs(nextForwardSpeed) > 2) {

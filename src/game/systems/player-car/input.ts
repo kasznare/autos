@@ -27,6 +27,7 @@ export const bindKeyboardControls = (inputRef: { current: DriveInputState }, set
     setKeyboardInput('backward', false)
     setKeyboardInput('left', false)
     setKeyboardInput('right', false)
+    setKeyboardInput('jump', false)
     setKeyboardInput('restart', false)
   }
   window.addEventListener('keydown', onDown)
@@ -109,9 +110,9 @@ export const syncGamepadInput = (activeGamepadIndexRef: { current: number | null
     setGamepadInput('backward', l2 > 0.16 || axisY > 0.32 || dpadDown)
     setGamepadInput('left', axisX < -0.28 || dpadLeft)
     setGamepadInput('right', axisX > 0.28 || dpadRight)
-    setGamepadInput('restart', cross || options)
+    setGamepadInput('jump', cross)
+    setGamepadInput('restart', options)
   } else {
     resetGamepadInput()
   }
 }
-

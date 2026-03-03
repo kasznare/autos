@@ -35,7 +35,10 @@ export type VehicleSpecV2 = {
 
 export type ImpactDamageEvaluationInputV2 = {
   vehicleMass: number
+  otherMass: number
   planarSpeed: number
+  relativePlanarSpeed: number
+  relativeSpeed: number
   verticalSpeed: number
   forwardAlignment: number
   armorScale: number
@@ -109,6 +112,8 @@ export type PhysicsDebugTelemetryV2 = {
   speedKph: number
   steeringDeg: number
   slipRatio: number
+  jumpState: 'grounded' | 'airborne' | 'cooldown'
+  jumpCooldownRemaining: number
   latestImpactImpulse: number
   latestImpactTier: ImpactTierV2
   latestImpactMaterial: MaterialKeyV2
@@ -123,6 +128,7 @@ export type WorldObstacle = {
   size: [number, number, number]
   material: CollisionMaterial
   movable?: boolean
+  mass?: number
   color: string
 }
 

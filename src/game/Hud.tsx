@@ -4,7 +4,7 @@ import { resetVirtualInput, setVirtualInput } from './keys'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
 
-type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'restart'
+type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart'
 
 const TouchButton = ({
   icon,
@@ -57,6 +57,7 @@ export const Hud = ({
   const mission = useGameStore((state) => state.mission)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
   const keyboardInput = useGameStore((state) => state.keyboardInput)
+  const physicsTelemetry = useGameStore((state) => state.physicsTelemetry)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
@@ -116,6 +117,14 @@ export const Hud = ({
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
           <div className="hud-card hud-card-compact">FPS: {fps}</div>
         </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">
+            Jump: {physicsTelemetry.jumpState === 'grounded' && physicsTelemetry.jumpCooldownRemaining <= 0.001 ? 'Ready' : `${Math.max(0, physicsTelemetry.jumpCooldownRemaining).toFixed(1)}s`} ({physicsTelemetry.jumpState})
+          </div>
+          <div className="hud-card hud-card-compact">
+            Hit: {physicsTelemetry.latestImpactTier} ({physicsTelemetry.latestImpactImpulse.toFixed(1)})
+          </div>
+        </div>
         <div className="mission-card">
           <div className="mission-title">
             Mission: {mission.label}
@@ -131,7 +140,7 @@ export const Hud = ({
           <span className="multiplayer-state">Controller: {gamepadConnected ? 'Connected' : 'Not Connected'}</span>
         </div>
 
-        <div className="instructions">Drive: WASD / Arrows • Restart: R or Space</div>
+        <div className="instructions">Drive: WASD / Arrows • Jump: Space • Restart: R</div>
       </div>
       <div className="damage-wrap damage-wrap-center">
         <div className="damage-label">Damage: {damagePct}%</div>
@@ -141,6 +150,7 @@ export const Hud = ({
       </div>
       <div className="touch-controls">
         <div className="touch-row">
+          <TouchButton icon="⤒" ariaLabel="Jump" keyName="jump" active={keyboardInput.jump} />
           <TouchButton icon="▲" ariaLabel="Forward" keyName="forward" active={keyboardInput.forward} />
         </div>
         <div className="touch-row">
