@@ -18,6 +18,10 @@ let engineMasterGain: GainNode | null = null
 let engineLowShelf: BiquadFilterNode | null = null
 let engineHighShelf: BiquadFilterNode | null = null
 let engineCompressor: DynamicsCompressorNode | null = null
+let terrainRumbleOsc: OscillatorNode | null = null
+let terrainRumbleGain: GainNode | null = null
+let slipSkidOsc: OscillatorNode | null = null
+let slipSkidGain: GainNode | null = null
 
 let engineMuted = false
 let engineLoopsStarted = false
@@ -80,7 +84,11 @@ const ensureEngineLoop = () => {
     engineMasterGain &&
     engineLowShelf &&
     engineHighShelf &&
-    engineCompressor
+    engineCompressor &&
+    terrainRumbleOsc &&
+    terrainRumbleGain &&
+    slipSkidOsc &&
+    slipSkidGain
   ) {
     if (!engineLoopsStarted) {
       void engineIdleEl.play().catch(() => {})
@@ -103,6 +111,10 @@ const ensureEngineLoop = () => {
       masterGain: engineMasterGain,
       lowShelf: engineLowShelf,
       highShelf: engineHighShelf,
+      terrainRumbleOsc,
+      terrainRumbleGain,
+      slipSkidOsc,
+      slipSkidGain,
     }
   }
 
@@ -124,6 +136,10 @@ const ensureEngineLoop = () => {
   const lowShelf = audio.createBiquadFilter()
   const highShelf = audio.createBiquadFilter()
   const compressor = audio.createDynamicsCompressor()
+  const rumbleOsc = audio.createOscillator()
+  const rumbleGain = audio.createGain()
+  const skidOsc = audio.createOscillator()
+  const skidGain = audio.createGain()
 
   idleGain.gain.setValueAtTime(0.0001, audio.currentTime)
   lowGain.gain.setValueAtTime(0.0001, audio.currentTime)
@@ -144,6 +160,12 @@ const ensureEngineLoop = () => {
   compressor.ratio.setValueAtTime(2.7, audio.currentTime)
   compressor.attack.setValueAtTime(0.004, audio.currentTime)
   compressor.release.setValueAtTime(0.12, audio.currentTime)
+  rumbleOsc.type = 'triangle'
+  rumbleOsc.frequency.setValueAtTime(48, audio.currentTime)
+  rumbleGain.gain.setValueAtTime(0.0001, audio.currentTime)
+  skidOsc.type = 'sawtooth'
+  skidOsc.frequency.setValueAtTime(240, audio.currentTime)
+  skidGain.gain.setValueAtTime(0.0001, audio.currentTime)
 
   idleSource.connect(idleGain)
   lowSource.connect(lowGain)
@@ -154,6 +176,10 @@ const ensureEngineLoop = () => {
   lowGain.connect(masterGain)
   highGain.connect(masterGain)
   reverseGain.connect(masterGain)
+  rumbleOsc.connect(rumbleGain)
+  rumbleGain.connect(masterGain)
+  skidOsc.connect(skidGain)
+  skidGain.connect(masterGain)
   masterGain.connect(lowShelf)
   lowShelf.connect(highShelf)
   highShelf.connect(compressor)
@@ -177,6 +203,13 @@ const ensureEngineLoop = () => {
   engineLowShelf = lowShelf
   engineHighShelf = highShelf
   engineCompressor = compressor
+  terrainRumbleOsc = rumbleOsc
+  terrainRumbleGain = rumbleGain
+  slipSkidOsc = skidOsc
+  slipSkidGain = skidGain
+
+  rumbleOsc.start(audio.currentTime)
+  skidOsc.start(audio.currentTime)
 
   void idleEl.play().catch(() => {})
   void lowEl.play().catch(() => {})
@@ -198,6 +231,10 @@ const ensureEngineLoop = () => {
       masterGain,
       lowShelf,
       highShelf,
+      terrainRumbleOsc: rumbleOsc,
+      terrainRumbleGain: rumbleGain,
+      slipSkidOsc: skidOsc,
+      slipSkidGain: skidGain,
     }
   }
 
@@ -225,6 +262,8 @@ export const updateEngineSound = ({
   surface,
   engineLoad = 0,
   tone = 'steady',
+  slip = 0,
+  traction = 1,
 }: {
   speed: number
   throttle: number
@@ -232,13 +271,32 @@ export const updateEngineSound = ({
   surface: 'road' | 'grass'
   engineLoad?: number
   tone?: EngineTone
+  slip?: number
+  traction?: number
 }) => {
   const loop = ensureEngineLoop()
   if (!loop) {
     return
   }
 
-  const { audio, idleEl, lowEl, highEl, reverseEl, idleGain, lowGain, highGain, reverseGain, masterGain, lowShelf, highShelf } = loop
+  const {
+    audio,
+    idleEl,
+    lowEl,
+    highEl,
+    reverseEl,
+    idleGain,
+    lowGain,
+    highGain,
+    reverseGain,
+    masterGain,
+    lowShelf,
+    highShelf,
+    terrainRumbleOsc: rumbleOsc,
+    terrainRumbleGain: rumbleGain,
+    slipSkidOsc: skidOsc,
+    slipSkidGain: skidGain,
+  } = loop
   const now = audio.currentTime
   const dt = Math.min(0.05, Math.max(0.005, now - engineState.lastAudioTime || 0.016))
   engineState.lastAudioTime = now
@@ -251,6 +309,8 @@ export const updateEngineSound = ({
   const speedFactor = clamp01(speed / 12)
   const throttleFactor = clamp01(Math.abs(throttle))
   const loadFactor = clamp01(engineLoad)
+  const slipFactor = clamp01(slip)
+  const tractionFactor = clamp01(traction)
   const surfaceFactor = surface === 'grass' ? 0.85 : 1
   const maxThrottle = throttleFactor > 0.9 ? 1 : 0
   const nearIdle = speed < 0.7 && throttleFactor < 0.08 ? 1 : 0
@@ -302,6 +362,16 @@ export const updateEngineSound = ({
   // Dynamic EQ: keep idle warm, open up a bit at sustained high throttle.
   lowShelf.gain.setTargetAtTime(5.4 - speedFactor * 1.1 + engineState.idleHold * 0.8, now, 0.16)
   highShelf.gain.setTargetAtTime(-7 + throttlePush * 3.2 + speedFactor * 1.2, now, 0.16)
+
+  const rumbleTarget = (surface === 'grass' ? 0.027 : 0.01) * (0.45 + speedFactor * 0.8) * (1 - tractionFactor * 0.35)
+  const rumbleFreq = 40 + speedFactor * 36 + (surface === 'grass' ? 14 : 0)
+  rumbleGain.gain.setTargetAtTime(Math.max(0.0001, rumbleTarget), now, 0.1)
+  rumbleOsc.frequency.setTargetAtTime(rumbleFreq, now, 0.12)
+
+  const skidTarget = (0.002 + slipFactor * 0.028) * (0.4 + speedFactor * 0.9)
+  const skidFreq = 190 + slipFactor * 260 + speedFactor * 120
+  skidGain.gain.setTargetAtTime(Math.max(0.0001, skidTarget), now, 0.07)
+  skidOsc.frequency.setTargetAtTime(skidFreq, now, 0.09)
 }
 
 export const setEngineMuted = (muted: boolean) => {
@@ -382,6 +452,24 @@ export const stopEngineSound = () => {
     engineCompressor.disconnect()
     engineCompressor = null
   }
+  if (terrainRumbleOsc) {
+    terrainRumbleOsc.stop()
+    terrainRumbleOsc.disconnect()
+    terrainRumbleOsc = null
+  }
+  if (terrainRumbleGain) {
+    terrainRumbleGain.disconnect()
+    terrainRumbleGain = null
+  }
+  if (slipSkidOsc) {
+    slipSkidOsc.stop()
+    slipSkidOsc.disconnect()
+    slipSkidOsc = null
+  }
+  if (slipSkidGain) {
+    slipSkidGain.disconnect()
+    slipSkidGain = null
+  }
 
   engineLoopsStarted = false
   engineState.lastAudioTime = 0
@@ -423,10 +511,12 @@ export const playCollisionSound = (hardHit: boolean, speed: number) => {
   if (hardHit) {
     playTone(120 * normalized, 0.2, 'sawtooth', 0.11)
     playTone(88 * normalized, 0.26, 'triangle', 0.08)
+    playTone(64 * normalized, 0.18, 'square', 0.05)
     return
   }
 
   playTone(210 * normalized, 0.12, 'square', 0.06)
+  playTone(152 * normalized, 0.08, 'triangle', 0.04)
 }
 
 export const playPickupSound = (type: 'star' | 'repair' | 'part') => {

@@ -99,6 +99,14 @@ body {
   gap: 0.45rem;
 }
 
+.hud-feedback-row {
+  margin-top: 0.32rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
 .mission-card {
   margin-top: 0.42rem;
   background: rgba(255, 255, 255, 0.9);
@@ -136,7 +144,7 @@ body {
 
 .hud-panel {
   align-self: flex-end;
-  width: min(300px, 72vw);
+  width: min(350px, 82vw);
   background: rgba(240, 250, 255, 0.83);
   border: 2px solid rgba(255, 255, 255, 0.9);
   border-radius: 1rem;
@@ -144,6 +152,46 @@ body {
   box-shadow: 0 12px 26px rgba(10, 44, 70, 0.2);
   backdrop-filter: blur(4px);
   pointer-events: auto;
+}
+
+.telemetry-chip {
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #16465f;
+}
+
+.telemetry-chip-road {
+  background: linear-gradient(180deg, #e7f8ff, #ccedff);
+}
+
+.telemetry-chip-grass {
+  background: linear-gradient(180deg, #e9ffe8, #cbf4ca);
+}
+
+.telemetry-chip-speed-crawl {
+  color: #245d77;
+}
+
+.telemetry-chip-speed-cruise {
+  color: #2d6f2f;
+}
+
+.telemetry-chip-speed-fast {
+  color: #8f5c1a;
+}
+
+.telemetry-chip-speed-max {
+  color: #8d2a1f;
+}
+
+.telemetry-chip-warning {
+  background: linear-gradient(180deg, #ffe7ce, #ffd1a1);
+  color: #7c2b13;
+  border-color: #ffd8b8;
 }
 
 .hud-card {
@@ -649,6 +697,10 @@ body {
     padding: 0.65rem;
   }
 
+  .hud-panel {
+    width: min(350px, 92vw);
+  }
+
   .hud-card {
     font-size: 0.95rem;
   }
@@ -660,6 +712,10 @@ body {
 
   .instructions {
     font-size: 0.82rem;
+  }
+
+  .telemetry-chip {
+    font-size: 0.68rem;
   }
 
   .touch-btn {
