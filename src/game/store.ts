@@ -2,8 +2,10 @@ import { create } from 'zustand'
 import { CAR_COLOR_OPTIONS, MAX_DAMAGE } from './config'
 import type { CarProfileId } from './config'
 import { createInputState } from './keys'
-import type { MapId } from './maps'
 import type { DriveInputState } from './keys'
+import type { MapId } from './maps'
+import { createInitialPhysicsDebugTelemetryV2 } from './physics'
+import type { PhysicsDebugTelemetryV2 } from './types'
 
 type GameStatus = 'running' | 'lost'
 type BatterySaverMode = 'auto' | 'on' | 'off'
@@ -57,6 +59,7 @@ type GameState = {
   hitFxToken: number
   hitFxStrength: number
   lastHitLabel: string
+  physicsTelemetry: PhysicsDebugTelemetryV2
   addDamage: (amount: number) => void
   addScore: (amount: number) => void
   repair: (amount: number) => void
@@ -70,6 +73,7 @@ type GameState = {
   setGamepadConnected: (connected: boolean) => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
+  setPhysicsTelemetry: (next: Partial<PhysicsDebugTelemetryV2>) => void
   advanceMission: (event: MissionType, amount?: number) => void
   setMissionProgress: (event: MissionType, progress: number) => void
   restartRun: () => void
@@ -95,6 +99,7 @@ export const useGameStore = create<GameState>((set) => ({
   hitFxToken: 0,
   hitFxStrength: 0,
   lastHitLabel: '',
+  physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
   addDamage: (amount) =>
     set((state) => {
       if (state.status === 'lost') {
@@ -153,6 +158,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
       proceduralMapSeed: mapId === 'procedural' ? state.proceduralMapSeed + 1 : state.proceduralMapSeed,
     })),
@@ -167,6 +173,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
     })),
   setSelectedCarColor: (color) =>
@@ -201,6 +208,14 @@ export const useGameStore = create<GameState>((set) => ({
       ...state,
       speedKph,
       steeringDeg,
+    })),
+  setPhysicsTelemetry: (next) =>
+    set((state) => ({
+      ...state,
+      physicsTelemetry: {
+        ...state.physicsTelemetry,
+        ...next,
+      },
     })),
   advanceMission: (event, amount = 1) =>
     set((state) => {
@@ -265,6 +280,7 @@ export const useGameStore = create<GameState>((set) => ({
       hitFxStrength: 0,
       speedKph: 0,
       steeringDeg: 0,
+      physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
     })),
 }))
