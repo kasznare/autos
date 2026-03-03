@@ -186,7 +186,7 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
   )
 }
 
-export const RoadPath = ({ map }: { map: TrackMap }) => {
+export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
   const render = useRenderSettings()
   const { camera } = useThree()
   const materialRef = useRef<MeshStandardMaterial | null>(null)
@@ -266,7 +266,8 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
 
   const roadGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, render.terrainSegments, render.terrainSegments)
+    const segments = terrainSegments ?? render.terrainSegments
+    const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -277,7 +278,7 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map, render.terrainSegments])
+  }, [map, render.terrainSegments, terrainSegments])
 
   useFrame(() => {
     const material = materialRef.current
@@ -303,7 +304,7 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
   )
 }
 
-export const ProceduralGround = ({ map }: { map: TrackMap }) => {
+export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
   const render = useRenderSettings()
   const { camera } = useThree()
   const materialRef = useRef<MeshStandardMaterial | null>(null)
@@ -402,7 +403,8 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
 
   const terrainGeometry = useMemo(() => {
     const size = map.worldHalf * 2
-    const geometry = new PlaneGeometry(size, size, render.terrainSegments, render.terrainSegments)
+    const segments = terrainSegments ?? render.terrainSegments
+    const geometry = new PlaneGeometry(size, size, segments, segments)
     geometry.rotateX(-Math.PI / 2)
     const pos = geometry.attributes.position
     for (let i = 0; i < pos.count; i += 1) {
@@ -413,7 +415,7 @@ export const ProceduralGround = ({ map }: { map: TrackMap }) => {
     pos.needsUpdate = true
     geometry.computeVertexNormals()
     return geometry
-  }, [map, render.terrainSegments])
+  }, [map, render.terrainSegments, terrainSegments])
 
   const terrainColliderArgs = useMemo(() => {
     const posAttr = terrainGeometry.getAttribute('position')
@@ -541,9 +543,11 @@ export const CheckpointGates = ({
 export const Trees = ({
   trees,
   map,
+  castShadows = true,
 }: {
   trees: { id: string; position: [number, number, number]; scale: number; variant: 'round' | 'cone' }[]
   map: TrackMap
+  castShadows?: boolean
 }) => (
   <group>
     {trees.map((tree) => (
@@ -555,17 +559,17 @@ export const Trees = ({
         position={[tree.position[0], sampleTerrainHeight(map, tree.position[0], tree.position[2]), tree.position[2]]}
       >
         <group scale={tree.scale}>
-          <mesh castShadow position={[0, 0.7, 0]}>
+          <mesh castShadow={castShadows} position={[0, 0.7, 0]}>
             <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
             <meshStandardMaterial color="#6f4a25" roughness={0.9} />
           </mesh>
           {tree.variant === 'round' ? (
-            <mesh castShadow position={[0, 1.75, 0]}>
+            <mesh castShadow={castShadows} position={[0, 1.75, 0]}>
               <sphereGeometry args={[0.7, 12, 12]} />
               <meshStandardMaterial color="#3d8f49" roughness={0.85} />
             </mesh>
           ) : (
-            <mesh castShadow position={[0, 1.8, 0]}>
+            <mesh castShadow={castShadows} position={[0, 1.8, 0]}>
               <coneGeometry args={[0.74, 1.35, 12]} />
               <meshStandardMaterial color="#3f944d" roughness={0.85} />
             </mesh>
@@ -577,10 +581,21 @@ export const Trees = ({
   </group>
 )
 
-export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) => {
+export const RoadsideDetails = ({
+  map,
+  seed,
+  density = 1,
+  castShadows = true,
+}: {
+  map: TrackMap
+  seed: number
+  density?: number
+  castShadows?: boolean
+}) => {
   const details = useMemo(() => {
     const out: Array<{ id: string; type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
-    const maxItems = map.shape === 'path' ? 180 : 70
+    const densityScale = Math.max(0.2, density)
+    const maxItems = Math.round((map.shape === 'path' ? 180 : 70) * densityScale)
     const half = map.worldHalf - 4
     for (let i = 0; i < 900 && out.length < maxItems; i += 1) {
       const nx = pseudoNoise(seed + i, 201) * 2 - 1
@@ -601,18 +616,18 @@ export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) 
       })
     }
     return out
-  }, [map, seed])
+  }, [density, map, seed])
 
   return (
     <group>
       {details.map((item) =>
         item.type === 'rock' ? (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow receiveShadow>
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows} receiveShadow={castShadows}>
             <dodecahedronGeometry args={[0.35, 0]} />
             <meshStandardMaterial color="#7c8374" roughness={0.93} />
           </mesh>
         ) : (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow>
+          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows}>
             <sphereGeometry args={[0.42, 8, 7]} />
             <meshStandardMaterial color="#4d9f58" roughness={0.88} />
           </mesh>
