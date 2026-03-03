@@ -8,7 +8,9 @@ import { TRACK_SIZE } from './config'
 import { getTrackMap, isPointOnRoad, sampleTerrainHeight, type TrackMap } from './maps'
 import { createRoomChannel, isMultiplayerConfigured, makeClientId, type CarSnapshot, type RoomChannelHandle } from './multiplayer'
 import { PlayerCar } from './PlayerCar'
+import { emitPhysicsEventV2, getMaterialResponseV2, normalizeCollisionMaterialV2 } from './physics'
 import { useGameStore } from './store'
+import { PHYSICS_API_VERSION_V2 } from './types'
 import type { DestructibleProp, Pickup, WorldObstacle } from './types'
 import { DESTRUCTIBLE_COLORS, DESTRUCTIBLE_SPAWN_POINTS, INITIAL_DESTRUCTIBLES, INITIAL_PICKUPS, MOVABLE_OBSTACLES, STATIC_OBSTACLES } from './world'
 
@@ -762,7 +764,18 @@ const ForestCritter = ({
         }
         const v = payload.other.rigidBody?.linvel?.()
         const speed = v ? Math.hypot(v.x, v.z) : 0
-        if (speed >= CRITTER_BREAK_SPEED) {
+        const breakSpeedThreshold = Math.min(CRITTER_BREAK_SPEED, getMaterialResponseV2('wood').breakSpeedMps)
+        if (speed >= breakSpeedThreshold) {
+          emitPhysicsEventV2('impact', {
+            apiVersion: PHYSICS_API_VERSION_V2,
+            sourceId: critter.id,
+            sourceMaterial: 'wood',
+            zone: 'front',
+            tier: speed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
+            energyJoules: speed * speed * 12,
+            impulse: speed * 0.6,
+            speedMps: speed,
+          })
           const p = bodyRef.current?.translation?.()
           const hitPos: [number, number, number] = p
             ? [p.x, p.y, p.z]
@@ -794,34 +807,46 @@ const ForestCritter = ({
   )
 }
 
-const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
-  <RigidBody type="fixed" colliders={false} name={`${obstacle.material}-${obstacle.id}`}>
-    <mesh position={obstacle.position} castShadow receiveShadow>
-      <boxGeometry args={obstacle.size} />
-      <meshStandardMaterial color={obstacle.color} />
-    </mesh>
-    <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
-  </RigidBody>
-)
+const StaticObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
+  return (
+    <RigidBody
+      type="fixed"
+      colliders={false}
+      friction={response.friction}
+      restitution={response.restitution}
+      name={`${obstacle.material}-${obstacle.id}`}
+    >
+      <mesh position={obstacle.position} castShadow receiveShadow>
+        <boxGeometry args={obstacle.size} />
+        <meshStandardMaterial color={obstacle.color} />
+      </mesh>
+      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} position={obstacle.position} />
+    </RigidBody>
+  )
+}
 
-const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => (
-  <RigidBody
-    colliders={false}
-    position={obstacle.position}
-    mass={0.5}
-    friction={0.8}
-    restitution={0.1}
-    linearDamping={0.9}
-    angularDamping={0.85}
-    name={`${obstacle.material}-${obstacle.id}`}
-  >
-    <mesh castShadow receiveShadow>
-      <boxGeometry args={obstacle.size} />
-      <meshStandardMaterial color={obstacle.color} />
-    </mesh>
-    <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
-  </RigidBody>
-)
+const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
+  const response = getMaterialResponseV2(normalizeCollisionMaterialV2(obstacle.material))
+  return (
+    <RigidBody
+      colliders={false}
+      position={obstacle.position}
+      mass={0.5}
+      friction={response.friction}
+      restitution={response.restitution}
+      linearDamping={0.9}
+      angularDamping={0.85}
+      name={`${obstacle.material}-${obstacle.id}`}
+    >
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={obstacle.size} />
+        <meshStandardMaterial color={obstacle.color} />
+      </mesh>
+      <CuboidCollider args={obstacle.size.map((v) => v / 2) as [number, number, number]} />
+    </RigidBody>
+  )
+}
 
 const chunkOffsets: [number, number, number][] = [
   [-0.22, 0.16, -0.22],
@@ -905,7 +930,18 @@ const IntactDestructible = ({
       const otherBody = payload.other.rigidBody
       const velocity = otherBody?.linvel?.()
       const planarSpeed = velocity ? Math.hypot(velocity.x, velocity.z) : 0
-      if (planarSpeed >= DESTRUCTIBLE_BREAK_SPEED) {
+      const breakSpeedThreshold = Math.min(DESTRUCTIBLE_BREAK_SPEED, getMaterialResponseV2('wood').breakSpeedMps)
+      if (planarSpeed >= breakSpeedThreshold) {
+        emitPhysicsEventV2('impact', {
+          apiVersion: PHYSICS_API_VERSION_V2,
+          sourceId: destructible.id,
+          sourceMaterial: 'wood',
+          zone: 'front',
+          tier: planarSpeed > breakSpeedThreshold * 1.5 ? 'major' : 'moderate',
+          energyJoules: planarSpeed * planarSpeed * 16,
+          impulse: planarSpeed * 0.7,
+          speedMps: planarSpeed,
+        })
         onBreak(destructible.id)
       }
     }}

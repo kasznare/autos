@@ -71,6 +71,7 @@ export const Hud = ({
   const keyboardInput = useGameStore((state) => state.keyboardInput)
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
+  const physicsTelemetry = useGameStore((state) => state.physicsTelemetry)
   const restartRun = useGameStore((state) => state.restartRun)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setBatterySaverMode = useGameStore((state) => state.setBatterySaverMode)
@@ -116,6 +117,11 @@ export const Hud = ({
         <div className="hud-telemetry-row">
           <div className="hud-card hud-card-compact">Speed: {Math.round(speedKph)} km/h</div>
           <div className="hud-card hud-card-compact">Steer: {steeringDeg >= 0 ? '+' : ''}{Math.round(steeringDeg)}°</div>
+        </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">Slip: {Math.round(physicsTelemetry.slipRatio * 100)}%</div>
+          <div className="hud-card hud-card-compact">Impact: {physicsTelemetry.latestImpactTier}/{physicsTelemetry.latestImpactMaterial}</div>
+          <div className="hud-card hud-card-compact">Guards N{physicsTelemetry.nanGuardTrips} S{physicsTelemetry.speedClampTrips}</div>
         </div>
         <div className="mission-card">
           <div className="mission-title">
