@@ -2,16 +2,33 @@ import { Sparkles } from '@react-three/drei'
 import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
-import { Color, Group, Vector3 } from 'three'
+import { Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
-import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
-import { applyKey, createInputState, getMergedInput, keyCodeToInput, resetGamepadInput, setGamepadInput } from './keys'
-import { getMaterialTuningAt, getSurfaceMaterialAt, getTrackMap, sampleTerrainHeight } from './maps'
-import { emitPhysicsEventV2, evaluateImpactDamageV2, normalizeCollisionMaterialV2 } from './physics'
-import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
+import { MAX_DAMAGE, PLAYER_BODY_NAME } from './config'
+import { createInputState, getMergedInput } from './keys'
+import { getTrackMap, sampleTerrainHeight } from './maps'
+import { playPickupSound, setEngineMuted, stopEngineSound, updateEngineSound } from './sfx'
 import { useGameStore } from './store'
-import type { CollisionMaterial, ImpactTierV2, MaterialKeyV2, PartDamageStateV2, PartZoneIdV2, Pickup } from './types'
-import { PHYSICS_API_VERSION_V2 } from './types'
+import {
+  bindGamepadConnectionState,
+  bindKeyboardControls,
+  CAMERA_FOLLOW_DISTANCE,
+  CAMERA_FOLLOW_HEIGHT,
+  CAMERA_LOOK_AHEAD,
+  DEFAULT_START_POSITION,
+  ensureFinitePhysicsState,
+  handlePlayerCollisionEnter,
+  handlePlayerCollisionExit,
+  clampExcessMotion,
+  runVehicleDynamicsStep,
+  updateCameraAndDamageVisuals,
+  getCarPalette,
+  getImpactLabel,
+  processNearbyPickups,
+  resetBodyPoseAndTelemetry,
+  syncGamepadInput,
+} from './systems/player-car'
+import type { PartDamageStateV2, PartZoneIdV2, Pickup } from './types'
 
 type PlayerCarProps = {
   pickups: Pickup[]
@@ -20,64 +37,10 @@ type PlayerCarProps = {
   lowPowerMode?: boolean
 }
 
-const DEFAULT_START_POSITION = { x: 0, y: 0.38, z: 20 }
-const CAMERA_FOLLOW_DISTANCE = 9.5
-const CAMERA_FOLLOW_HEIGHT = 5.5
-const CAMERA_LOOK_AHEAD = 4.5
-
 const tempVec = new Vector3()
 const tempCamTarget = new Vector3()
 const tempCamPosition = new Vector3()
 const tempBodyPos = new Vector3()
-const tempColor = new Color()
-const warningColor = new Color('#9d291f')
-const normalizeAngleDelta = (angle: number) => {
-  const twoPi = Math.PI * 2
-  let out = angle % twoPi
-  if (out > Math.PI) out -= twoPi
-  if (out < -Math.PI) out += twoPi
-  return out
-}
-
-const getCarPalette = (baseHex: string, accentHex: string, damage: number) => {
-  const t = Math.min(1, Math.max(0, damage / MAX_DAMAGE))
-  const body = tempColor.set(baseHex).clone().lerp(warningColor, t * 0.65)
-  const accent = tempColor.set(accentHex).clone().lerp(new Color('#f2f2f2'), 0.35 - t * 0.2)
-  return {
-    body: `#${body.getHexString()}`,
-    accent: `#${accent.getHexString()}`,
-  }
-}
-
-const getCollisionMaterial = (name: string): CollisionMaterial => {
-  if (name.startsWith('rock-')) return 'rock'
-  if (name.startsWith('metal-') || name.startsWith('hard-')) return 'metal'
-  if (name.startsWith('wood-') || name.startsWith('medium-')) return 'wood'
-  if (name.startsWith('glass-')) return 'glass'
-  if (name.startsWith('rubber-') || name.startsWith('soft-')) return 'rubber'
-  return 'rubber'
-}
-
-const getImpactLabel = (material: MaterialKeyV2, tier: ImpactTierV2, scrape = false) => {
-  if (scrape) {
-    return 'Side scrape'
-  }
-  if (material === 'rubber') {
-    return 'Soft bump'
-  }
-  if (material === 'wood') {
-    return tier === 'major' || tier === 'critical' ? 'Crate hit' : 'Light hit'
-  }
-  return tier === 'critical' || tier === 'major' ? 'Big crash' : 'Hard hit'
-}
-
-const getPartStateForDamage = (zoneDamage: number): PartDamageStateV2 => {
-  if (zoneDamage >= 80) return 'detached'
-  if (zoneDamage >= 58) return 'cracked'
-  if (zoneDamage >= 28) return 'dented'
-  return 'intact'
-}
-
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody | null>(null)
   const lastDamageAt = useRef(0)
@@ -191,37 +154,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   }, [restartToken, setPhysicsTelemetry, setTelemetry, startPosition, startYaw])
 
   useEffect(() => {
-    const onDown = (event: KeyboardEvent) => {
-      void unlockAudio()
-      applyKey(inputRef.current, event.code, true)
-      const mapped = keyCodeToInput(event.code)
-      if (mapped) {
-        setKeyboardInput(mapped, true)
-      }
-    }
-    const onUp = (event: KeyboardEvent) => {
-      applyKey(inputRef.current, event.code, false)
-      const mapped = keyCodeToInput(event.code)
-      if (mapped) {
-        setKeyboardInput(mapped, false)
-      }
-    }
-    const onBlur = () => {
-      inputRef.current = createInputState()
-      setKeyboardInput('forward', false)
-      setKeyboardInput('backward', false)
-      setKeyboardInput('left', false)
-      setKeyboardInput('right', false)
-      setKeyboardInput('restart', false)
-    }
-    window.addEventListener('keydown', onDown)
-    window.addEventListener('keyup', onUp)
-    window.addEventListener('blur', onBlur)
-    return () => {
-      window.removeEventListener('keydown', onDown)
-      window.removeEventListener('keyup', onUp)
-      window.removeEventListener('blur', onBlur)
-    }
+    return bindKeyboardControls(inputRef, setKeyboardInput)
   }, [setKeyboardInput])
 
   useEffect(() => {
@@ -229,40 +162,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   }, [engineMuted])
 
   useEffect(() => {
-    const updateConnectedState = () => {
-      if (typeof navigator === 'undefined' || !navigator.getGamepads) {
-        setGamepadConnected(false)
-        return
-      }
-      const pads = navigator.getGamepads()
-      const hasPad = Array.from(pads).some((pad) => Boolean(pad && pad.connected))
-      setGamepadConnected(hasPad)
-      if (!hasPad) {
-        activeGamepadIndexRef.current = null
-        resetGamepadInput()
-      }
-    }
-
-    const onGamepadConnected = (event: Event) => {
-      const gamepadEvent = event as GamepadEvent
-      activeGamepadIndexRef.current = gamepadEvent.gamepad.index
-      setGamepadConnected(true)
-    }
-
-    const onGamepadDisconnected = () => {
-      updateConnectedState()
-    }
-
-    window.addEventListener('gamepadconnected', onGamepadConnected)
-    window.addEventListener('gamepaddisconnected', onGamepadDisconnected)
-    updateConnectedState()
-
-    return () => {
-      window.removeEventListener('gamepadconnected', onGamepadConnected)
-      window.removeEventListener('gamepaddisconnected', onGamepadDisconnected)
-      resetGamepadInput()
-      setGamepadConnected(false)
-    }
+    return bindGamepadConnectionState(activeGamepadIndexRef, setGamepadConnected)
   }, [setGamepadConnected])
 
   useEffect(() => {
@@ -277,104 +177,43 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       return
     }
 
-    if (typeof navigator !== 'undefined' && navigator.getGamepads) {
-      const pads = navigator.getGamepads()
-      let gamepad: Gamepad | null = null
-      const activeIdx = activeGamepadIndexRef.current
-      if (activeIdx !== null && pads[activeIdx] && pads[activeIdx]?.connected) {
-        gamepad = pads[activeIdx]
-      } else {
-        gamepad = Array.from(pads).find((pad) => Boolean(pad && pad.connected)) ?? null
-        activeGamepadIndexRef.current = gamepad?.index ?? null
-      }
-
-      if (gamepad) {
-        const axisX = gamepad.axes[0] ?? 0
-        const axisY = gamepad.axes[1] ?? 0
-        const dpadUp = Boolean(gamepad.buttons[12]?.pressed)
-        const dpadDown = Boolean(gamepad.buttons[13]?.pressed)
-        const dpadLeft = Boolean(gamepad.buttons[14]?.pressed)
-        const dpadRight = Boolean(gamepad.buttons[15]?.pressed)
-        const r2 = gamepad.buttons[7]?.value ?? 0
-        const l2 = gamepad.buttons[6]?.value ?? 0
-        const cross = Boolean(gamepad.buttons[0]?.pressed)
-        const options = Boolean(gamepad.buttons[9]?.pressed)
-
-        setGamepadInput('forward', r2 > 0.16 || axisY < -0.32 || dpadUp)
-        setGamepadInput('backward', l2 > 0.16 || axisY > 0.32 || dpadDown)
-        setGamepadInput('left', axisX < -0.28 || dpadLeft)
-        setGamepadInput('right', axisX > 0.28 || dpadRight)
-        setGamepadInput('restart', cross || options)
-      } else {
-        resetGamepadInput()
-      }
-    }
-
-    const pos = body.translation()
-    const rawLinVel = body.linvel()
-    const rawAngVel = body.angvel()
-    const isFiniteState =
-      Number.isFinite(pos.x) &&
-      Number.isFinite(pos.y) &&
-      Number.isFinite(pos.z) &&
-      Number.isFinite(rawLinVel.x) &&
-      Number.isFinite(rawLinVel.y) &&
-      Number.isFinite(rawLinVel.z) &&
-      Number.isFinite(rawAngVel.x) &&
-      Number.isFinite(rawAngVel.y) &&
-      Number.isFinite(rawAngVel.z)
-    if (!isFiniteState) {
-      nanGuardTripsRef.current += 1
-      body.setTranslation(startPosition, true)
-      body.setLinvel({ x: 0, y: 0, z: 0 }, true)
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-      body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
-      setTelemetry(0, 0)
-      setPhysicsTelemetry({
-        speedKph: 0,
-        steeringDeg: 0,
-        slipRatio: 0,
-        hardContactCount: hardContactCountRef.current,
-        nanGuardTrips: nanGuardTripsRef.current,
-        speedClampTrips: speedClampTripsRef.current,
+    syncGamepadInput(activeGamepadIndexRef)
+    if (
+      !ensureFinitePhysicsState({
+        body,
+        startPosition,
+        startYaw,
+        hardContactCountRef,
+        nanGuardTripsRef,
+        speedClampTripsRef,
+        setTelemetry,
+        setPhysicsTelemetry,
       })
+    ) {
       return
     }
+    clampExcessMotion(body, speedClampTripsRef)
 
-    const planarSpeedBeforeClamp = Math.hypot(rawLinVel.x, rawLinVel.z)
-    if (planarSpeedBeforeClamp > 52) {
-      speedClampTripsRef.current += 1
-      const clampScale = 52 / planarSpeedBeforeClamp
-      body.setLinvel({ x: rawLinVel.x * clampScale, y: rawLinVel.y, z: rawLinVel.z * clampScale }, true)
-    }
-    const angularMag = Math.hypot(rawAngVel.x, rawAngVel.y, rawAngVel.z)
-    if (angularMag > 16) {
-      const clampScale = 16 / angularMag
-      body.setAngvel({ x: rawAngVel.x * clampScale, y: rawAngVel.y * clampScale, z: rawAngVel.z * clampScale }, true)
-    }
-
-    const linVel = body.linvel()
+    const pos = body.translation()
     const maxOutOfBounds = map.worldHalf * 1.08
     if (Math.abs(pos.x) > maxOutOfBounds || Math.abs(pos.z) > maxOutOfBounds) {
-      body.setTranslation(startPosition, true)
-      body.setLinvel({ x: 0, y: 0, z: 0 }, true)
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-      body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
-      yawRateRef.current = 0
-      steerAngleRef.current = 0
-      lastYawRef.current = startYaw
-      stuckSteerTimerRef.current = 0
-      smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
-      smoothedForwardRef.current.set(Math.sin(startYaw), 0, Math.cos(startYaw))
-      smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
-      setTelemetry(0, 0)
-      setPhysicsTelemetry({
-        speedKph: 0,
-        steeringDeg: 0,
-        slipRatio: 0,
-        hardContactCount: hardContactCountRef.current,
-        nanGuardTrips: nanGuardTripsRef.current,
-        speedClampTrips: speedClampTripsRef.current,
+      resetBodyPoseAndTelemetry({
+        body,
+        startPosition,
+        startYaw,
+        hardContactCountRef,
+        nanGuardTripsRef,
+        speedClampTripsRef,
+        setTelemetry,
+        setPhysicsTelemetry,
+        yawRateRef,
+        steerAngleRef,
+        lastYawRef,
+        stuckSteerTimerRef,
+        smoothedPosRef,
+        smoothedForwardRef,
+        smoothedTargetRef,
+        cameraLookAhead: CAMERA_LOOK_AHEAD,
       })
       triggerHitFx(0.22, 'Back on road')
       onPlayerPosition([startPosition.x, startPosition.y, startPosition.z])
@@ -398,294 +237,74 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
 
     const input = getMergedInput(inputRef.current)
-    armorTimerRef.current = Math.max(0, armorTimerRef.current - delta)
-    const armorActive = armorTimerRef.current > 0
-    const rotation = body.rotation()
-    const yaw = Math.atan2(
-      2 * (rotation.w * rotation.y + rotation.x * rotation.z),
-      1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
-    )
-    const forwardX = Math.sin(yaw)
-    const forwardZ = Math.cos(yaw)
-    const rightX = Math.cos(yaw)
-    const rightZ = -Math.sin(yaw)
-    const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
-    const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
-    const surfaceMaterial = getSurfaceMaterialAt(map, pos.x, pos.z)
-    const materialTuning = getMaterialTuningAt(map, pos.x, pos.z)
-    const onRoad = surfaceMaterial === 'asphalt' || surfaceMaterial === 'basalt' || surfaceMaterial === 'regolith'
-    const baseSurface = onRoad ? DRIVE_SURFACE.road : DRIVE_SURFACE.grass
-    const surfaceConfig = {
-      ...baseSurface,
-      gripFactor: baseSurface.gripFactor * materialTuning.tractionMultiplier,
-      forwardTopSpeed: baseSurface.forwardTopSpeed * materialTuning.topSpeedMultiplier,
-      reverseTopSpeed: baseSurface.reverseTopSpeed * materialTuning.topSpeedMultiplier,
-      forwardAcceleration: baseSurface.forwardAcceleration / materialTuning.dragMultiplier,
-      reverseAcceleration: baseSurface.reverseAcceleration / materialTuning.dragMultiplier,
-    }
-    const damageRatio = Math.min(1, damage / MAX_DAMAGE)
-    const accelScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.accelerationLoss
-    const speedScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.topSpeedLoss
-    const steeringScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.steeringLoss
-    const gripScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.gripLoss
-
-    const throttle = Number(input.forward) - Number(input.backward)
-    const criticalDamage = damage >= DAMAGE_DRIVE_EFFECTS.criticalThreshold
-    if (criticalDamage) {
-      sputterTimerRef.current -= delta
-      if (sputterTimerRef.current <= 0) {
-        sputterTimerRef.current = DAMAGE_SPUTTER.minInterval + Math.random() * DAMAGE_SPUTTER.variableInterval
-        sputterActiveRef.current = Math.random() < DAMAGE_SPUTTER.chance
-      }
-    } else {
-      sputterActiveRef.current = false
-      sputterTimerRef.current = 0
-    }
-    const throttleFactor = sputterActiveRef.current && throttle > 0 ? DAMAGE_SPUTTER.throttleFactor : 1
-    const effectiveThrottle = throttle * throttleFactor
-
-    let nextForwardSpeed = forwardSpeed
-    const wantsForward = effectiveThrottle > 0.02
-    const wantsBackward = effectiveThrottle < -0.02
-    const throttleAbs = Math.min(1, Math.abs(effectiveThrottle))
-    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * vehiclePhysicsTuning.accelMult
-    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * vehiclePhysicsTuning.accelMult * 1.25
-
-    if (wantsForward && nextForwardSpeed >= -0.15) {
-      nextForwardSpeed += throttleAbs * forwardAccel * delta
-    } else if (wantsBackward && nextForwardSpeed <= 0.15) {
-      nextForwardSpeed += effectiveThrottle * reverseAccel * delta
-    }
-
-    if (wantsBackward && nextForwardSpeed > 0) {
-      nextForwardSpeed -= VEHICLE_PHYSICS.brakeDecel * vehiclePhysicsTuning.brakeMult * delta
-    } else if (wantsForward && nextForwardSpeed < 0) {
-      nextForwardSpeed += VEHICLE_PHYSICS.reverseBrakeDecel * vehiclePhysicsTuning.brakeMult * delta
-    }
-
-    if (Math.abs(throttle) < 0.02) {
-      const brakeDir = Math.sign(nextForwardSpeed)
-      nextForwardSpeed -= brakeDir * VEHICLE_PHYSICS.engineBrake * delta
-    }
-
-    const speedAbs = Math.abs(nextForwardSpeed)
-    const dragForce = (VEHICLE_PHYSICS.rollingResistance * speedAbs + VEHICLE_PHYSICS.aeroDrag * speedAbs * speedAbs) * delta
-    nextForwardSpeed -= Math.sign(nextForwardSpeed) * Math.min(speedAbs, dragForce)
-
-    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * vehiclePhysicsTuning.topSpeedMult
-    const maxReverseSpeed =
-      surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * vehiclePhysicsTuning.reverseSpeedMult * 1.2
-    nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
-
-    const gripLerp = Math.min(
-      1,
-      delta *
-        (6.4 + Math.abs(nextForwardSpeed) * 0.45) *
-        gripScale *
-        surfaceConfig.gripFactor *
-        vehiclePhysicsTuning.gripMult,
-    )
-    const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
-
-    const turnDirection = Number(input.left) - Number(input.right)
-    const speedSteerScale = 1 - Math.min(0.62, Math.abs(nextForwardSpeed) / 16)
-    const targetSteerAngle =
-      turnDirection *
-      VEHICLE_PHYSICS.maxSteerRad *
-      (0.55 + speedSteerScale * 0.45) *
-      steeringScale *
-      vehiclePhysicsTuning.steeringMult
-    const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
-    steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
-    const reverseSteer = nextForwardSpeed < -0.15 ? -0.55 : 1
-    const targetYawRate =
-      ((nextForwardSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) *
-        Math.tan(steerAngleRef.current) *
-        reverseSteer) /
-      Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
-    const yawBlend = Math.min(1, delta * 10)
-    yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
-    let nextYaw = yaw + yawRateRef.current * delta
-
-    const angVel = body.angvel()
-    const yawDelta = Math.abs(normalizeAngleDelta(nextYaw - lastYawRef.current))
-    if (Math.abs(turnDirection) > 0 && Math.abs(nextForwardSpeed) > 2 && yawDelta < 0.0006) {
-      stuckSteerTimerRef.current += delta
-      if (stuckSteerTimerRef.current > 0.45) {
-        nextYaw += turnDirection * 0.015
-        yawRateRef.current = targetYawRate * 0.75
-        stuckSteerTimerRef.current = 0
-      }
-    } else {
-      stuckSteerTimerRef.current = Math.max(0, stuckSteerTimerRef.current - delta * 2)
-    }
-    const yawError = normalizeAngleDelta(nextYaw - yaw)
-    const yawRateError = targetYawRate - angVel.y
-
-    body.applyTorqueImpulse(
-      {
-        x: -angVel.x * 0.14,
-        y: yawError * (1.8 + Math.abs(nextForwardSpeed) * 0.32) + yawRateError * 0.9,
-        z: -angVel.z * 0.14,
-      },
-      true,
-    )
-    setTelemetry(Math.abs(nextForwardSpeed) * 3.6, (steerAngleRef.current * 180) / Math.PI)
-    setPhysicsTelemetry({
-      speedKph: Math.abs(nextForwardSpeed) * 3.6,
-      steeringDeg: (steerAngleRef.current * 180) / Math.PI,
-      slipRatio: Math.min(1, Math.abs(nextLateralSpeed) / Math.max(0.1, Math.abs(nextForwardSpeed) + Math.abs(nextLateralSpeed))),
-      hardContactCount: hardContactCountRef.current,
-      nanGuardTrips: nanGuardTripsRef.current,
-      speedClampTrips: speedClampTripsRef.current,
+    const step = runVehicleDynamicsStep({
+      body,
+      delta,
+      damage,
+      map,
+      input,
+      vehiclePhysicsTuning,
+      armorTimerRef,
+      sputterTimerRef,
+      sputterActiveRef,
+      steerAngleRef,
+      yawRateRef,
+      lastYawRef,
+      stuckSteerTimerRef,
+      hardContactCountRef,
+      scrapeDamageTimerRef,
+      nanGuardTripsRef,
+      speedClampTripsRef,
+      setTelemetry,
+      setPhysicsTelemetry,
+      onPlayerPosition,
+      addDamage,
+      triggerHitFx,
+      getImpactLabel,
     })
 
-    onPlayerPosition([pos.x, pos.y, pos.z])
-
-    lastYawRef.current = nextYaw
-    const moveForwardX = Math.sin(nextYaw)
-    const moveForwardZ = Math.cos(nextYaw)
-    const moveRightX = Math.cos(nextYaw)
-    const moveRightZ = -Math.sin(nextYaw)
-    const deltaForward = nextForwardSpeed - forwardSpeed
-    const deltaLateral = nextLateralSpeed - lateralSpeed
-    const driveMass = Math.max(0.8, body.mass())
-    body.applyImpulse(
-      {
-        x: (moveForwardX * deltaForward + moveRightX * deltaLateral) * driveMass,
-        y: 0,
-        z: (moveForwardZ * deltaForward + moveRightZ * deltaLateral) * driveMass,
-      },
-      true,
-    )
-
-    const postVel = body.linvel()
-    const nextVx = postVel.x
-    const nextVz = postVel.z
-
-    if (hardContactCountRef.current > 0 && Math.abs(nextForwardSpeed) > 2) {
-      scrapeDamageTimerRef.current += delta
-      if (scrapeDamageTimerRef.current >= 0.72) {
-        scrapeDamageTimerRef.current = 0
-        const scrapeDamage = Math.round(
-          vehiclePhysicsTuning.damageTakenMult *
-            KID_TUNING.damageTakenScale *
-            (armorActive ? KID_TUNING.armorDamageScale : 1),
-        )
-        if (scrapeDamage > 0) {
-          addDamage(scrapeDamage)
-          triggerHitFx(0.2, getImpactLabel('metal', 'minor', true))
-        }
-      }
-    } else {
-      scrapeDamageTimerRef.current = 0
-    }
-
-    const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
-    const lateralLoad = Math.min(1, Math.abs(nextLateralSpeed) / 2.4)
-    const engineLoad = Math.min(1, damageRatio * 0.55 + lateralLoad * 0.35 + (onRoad ? 0 : 0.2))
-    updateEngineSound({
-      speed: Math.abs(nextForwardSpeed),
-      throttle: Math.abs(throttle),
-      direction: engineDirection,
-      surface: onRoad ? 'road' : 'grass',
-      engineLoad,
-      tone: vehiclePhysicsTuning.engineTone,
+    updateCameraAndDamageVisuals({
+      delta,
+      nowSec: state.clock.elapsedTime,
+      damage,
+      yaw: step.yaw,
+      forwardX: step.forwardX,
+      forwardZ: step.forwardZ,
+      pos: step.pos,
+      nextVx: step.nextVx,
+      nextVz: step.nextVz,
+      camera,
+      tempBodyPos,
+      tempVec,
+      tempCamTarget,
+      tempCamPosition,
+      smoothedPosRef,
+      smoothedForwardRef,
+      smoothedTargetRef,
+      shakeStrengthRef,
+      sparkStrengthRef,
+      hitSparkRef,
+      bumperRef,
+      loosePanelRef,
+      hoodRef,
+      roofRef,
+      leftDoorRef,
+      rightDoorRef,
+      cameraFollowDistance: CAMERA_FOLLOW_DISTANCE,
+      cameraFollowHeight: CAMERA_FOLLOW_HEIGHT,
+      cameraLookAhead: CAMERA_LOOK_AHEAD,
     })
 
-    const camPosSmoothing = 1 - Math.exp(-delta * 9)
-    const camForwardSmoothing = 1 - Math.exp(-delta * 12)
-    const camTargetSmoothing = 1 - Math.exp(-delta * 11)
-
-    tempBodyPos.set(pos.x, pos.y, pos.z)
-    smoothedPosRef.current.lerp(tempBodyPos, camPosSmoothing)
-    tempVec.set(forwardX, 0, forwardZ)
-    if (tempVec.lengthSq() < 0.0001) {
-      tempVec.set(Math.sin(yaw), 0, Math.cos(yaw))
-    }
-    smoothedForwardRef.current.lerp(tempVec, camForwardSmoothing).normalize()
-
-    tempCamTarget.set(
-      smoothedPosRef.current.x + smoothedForwardRef.current.x * CAMERA_LOOK_AHEAD,
-      smoothedPosRef.current.y + 1.3,
-      smoothedPosRef.current.z + smoothedForwardRef.current.z * CAMERA_LOOK_AHEAD,
-    )
-    smoothedTargetRef.current.lerp(tempCamTarget, camTargetSmoothing)
-    tempCamPosition.set(
-      smoothedPosRef.current.x - smoothedForwardRef.current.x * CAMERA_FOLLOW_DISTANCE - nextVx * 0.16,
-      smoothedPosRef.current.y + CAMERA_FOLLOW_HEIGHT,
-      smoothedPosRef.current.z - smoothedForwardRef.current.z * CAMERA_FOLLOW_DISTANCE - nextVz * 0.16,
-    )
-    shakeStrengthRef.current *= Math.max(0, 1 - delta * 7.5)
-    sparkStrengthRef.current *= Math.max(0, 1 - delta * 5.2)
-    const shake = shakeStrengthRef.current
-    if (shake > 0.002) {
-      tempCamPosition.x += (Math.random() - 0.5) * shake
-      tempCamPosition.y += (Math.random() - 0.5) * shake * 0.6
-      tempCamPosition.z += (Math.random() - 0.5) * shake
-    }
-    if (hitSparkRef.current) {
-      const spark = sparkStrengthRef.current
-      hitSparkRef.current.visible = spark > 0.08
-      hitSparkRef.current.scale.setScalar(0.7 + spark * 0.7)
-    }
-    if (bumperRef.current) {
-      const bend = Math.max(0, (damage - 58) / 42)
-      const targetRotX = -0.03 - bend * 0.3
-      const targetPosY = 0.03 - bend * 0.09
-      bumperRef.current.rotation.x += (targetRotX - bumperRef.current.rotation.x) * Math.min(1, delta * 7)
-      bumperRef.current.position.y += (targetPosY - bumperRef.current.position.y) * Math.min(1, delta * 7)
-    }
-    if (hoodRef.current) {
-      const d = Math.max(0, (damage - 40) / 60)
-      hoodRef.current.rotation.x += (-0.08 - d * 0.38 - hoodRef.current.rotation.x) * Math.min(1, delta * 6.5)
-      hoodRef.current.position.y += (0.52 - d * 0.05 - hoodRef.current.position.y) * Math.min(1, delta * 6.5)
-    }
-    if (roofRef.current) {
-      const d = Math.max(0, (damage - 55) / 45)
-      const targetScaleY = 1 - d * 0.14
-      roofRef.current.scale.y += (targetScaleY - roofRef.current.scale.y) * Math.min(1, delta * 5)
-      roofRef.current.rotation.z += (Math.sin(state.clock.elapsedTime * 1.8) * d * 0.04 - roofRef.current.rotation.z) * Math.min(1, delta * 3)
-    }
-    if (leftDoorRef.current) {
-      const d = Math.max(0, (damage - 65) / 35)
-      leftDoorRef.current.rotation.z += (0.04 + d * 0.11 - leftDoorRef.current.rotation.z) * Math.min(1, delta * 5)
-    }
-    if (rightDoorRef.current) {
-      const d = Math.max(0, (damage - 62) / 38)
-      rightDoorRef.current.rotation.z += (-0.04 - d * 0.12 - rightDoorRef.current.rotation.z) * Math.min(1, delta * 5)
-    }
-    if (loosePanelRef.current) {
-      const isLoose = damage >= 82
-      loosePanelRef.current.visible = isLoose
-      if (isLoose) {
-        const wobble = 0.08 + (damage - 82) / 18 * 0.08
-        loosePanelRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 15) * wobble
-        loosePanelRef.current.rotation.y = Math.cos(state.clock.elapsedTime * 9) * wobble * 0.5
-      }
-    }
-    camera.position.lerp(tempCamPosition, camPosSmoothing)
-    camera.lookAt(smoothedTargetRef.current)
-
-    pickups.forEach((pickup) => {
-      tempVec.set(pickup.position[0], pickup.position[1], pickup.position[2])
-      const distance = tempVec.distanceTo(tempBodyPos)
-      if (distance > 1.5) {
-        return
-      }
-
-      if (pickup.type === 'star') {
-        addScore(10)
-      } else if (pickup.type === 'repair') {
-        repair(28)
-      } else {
-        repair(12)
-        addScore(4)
-        armorTimerRef.current = Math.max(armorTimerRef.current, KID_TUNING.armorDurationSec)
-        triggerHitFx(0.24, 'Spare parts shield')
-      }
-      playPickupSound(pickup.type)
-      onCollectPickup(pickup.id)
+    processNearbyPickups({
+      pickups,
+      tempVec,
+      tempBodyPos,
+      armorTimerRef,
+      addScore,
+      repair,
+      triggerHitFx,
+      playPickupSound,
+      onCollectPickup,
     })
   })
 
@@ -719,126 +338,37 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         if (otherBodyName.startsWith('terrain-')) {
           return
         }
-
-        const velocity = body.linvel()
-        const planarSpeed = Math.hypot(velocity.x, velocity.z)
-        const rotation = body.rotation()
-        const yaw = Math.atan2(
-          2 * (rotation.w * rotation.y + rotation.x * rotation.z),
-          1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
-        )
-        const forwardX = Math.sin(yaw)
-        const forwardZ = Math.cos(yaw)
-        const speed = Math.max(0.001, planarSpeed)
-        const velocityDirX = velocity.x / speed
-        const velocityDirZ = velocity.z / speed
-        const forwardAlignment = Math.abs(velocityDirX * forwardX + velocityDirZ * forwardZ)
-        const verticalSpeed = Math.abs(velocity.y)
-        const rightX = Math.cos(yaw)
-        const rightZ = -Math.sin(yaw)
-        const selfPos = body.translation()
-        const otherPos = payload.other.rigidBody?.translation?.()
-        const dx = (otherPos?.x ?? selfPos.x) - selfPos.x
-        const dz = (otherPos?.z ?? selfPos.z) - selfPos.z
-        const localImpactX = dx * rightX + dz * rightZ
-        const localImpactZ = dx * forwardX + dz * forwardZ
-
-        const impact = evaluateImpactDamageV2({
-          vehicleMass: Math.max(0.8, body.mass()),
-          planarSpeed,
-          verticalSpeed,
-          forwardAlignment,
-          armorScale: armorTimerRef.current > 0 ? KID_TUNING.armorDamageScale : 1,
-          profileDamageScale: vehiclePhysicsTuning.damageTakenMult,
-          kidDamageScale: KID_TUNING.damageTakenScale,
-          localImpactX,
-          localImpactZ,
+        const hitAt = handlePlayerCollisionEnter({
+          body,
           otherBodyName,
+          otherPosition: payload.other.rigidBody?.translation?.(),
+          now,
+          damage,
+          armorTimerRef,
+          vehicleDamageTakenMult: vehiclePhysicsTuning.damageTakenMult,
+          zoneDamageRef,
+          zoneStateRef,
+          disabledEmittedRef,
+          hardContactCountRef,
+          nanGuardTripsRef,
+          speedClampTripsRef,
+          shakeStrengthRef,
+          sparkStrengthRef,
+          addDamage,
+          triggerHitFx,
+          setPhysicsTelemetry,
         })
-
-        if (impact.material === 'metal' || impact.material === 'rock') {
-          hardContactCountRef.current += 1
+        if (hitAt !== undefined) {
+          lastDamageAt.current = hitAt
         }
-
-        emitPhysicsEventV2('impact', {
-          apiVersion: PHYSICS_API_VERSION_V2,
-          sourceId: otherBodyName || 'unknown',
-          sourceMaterial: impact.material,
-          zone: impact.zone,
-          tier: impact.tier,
-          energyJoules: impact.energyJoules,
-          impulse: impact.impulse,
-          speedMps: planarSpeed,
-        })
-        setPhysicsTelemetry({
-          latestImpactImpulse: impact.impulse,
-          latestImpactTier: impact.tier,
-          latestImpactMaterial: impact.material,
-          hardContactCount: hardContactCountRef.current,
-          nanGuardTrips: nanGuardTripsRef.current,
-          speedClampTrips: speedClampTripsRef.current,
-        })
-        if (impact.skipDamage) {
-          return
-        }
-
-        addDamage(impact.damageDelta)
-        const nextTotalDamage = Math.min(MAX_DAMAGE, damage + impact.damageDelta)
-        const previousZoneDamage = zoneDamageRef.current[impact.zone]
-        const nextZoneDamage = Math.min(100, previousZoneDamage + impact.damageDelta)
-        zoneDamageRef.current[impact.zone] = nextZoneDamage
-        const previousPartState = zoneStateRef.current[impact.zone]
-        const nextPartState = getPartStateForDamage(nextZoneDamage)
-        zoneStateRef.current[impact.zone] = nextPartState
-
-        emitPhysicsEventV2('damage_applied', {
-          apiVersion: PHYSICS_API_VERSION_V2,
-          sourceId: otherBodyName || 'unknown',
-          zone: impact.zone,
-          appliedDamage: impact.damageDelta,
-          totalDamage: nextTotalDamage,
-          tier: impact.tier,
-        })
-        if (previousPartState !== nextPartState) {
-          emitPhysicsEventV2('part_state_changed', {
-            apiVersion: PHYSICS_API_VERSION_V2,
-            zone: impact.zone,
-            previousState: previousPartState,
-            nextState: nextPartState,
-            zoneDamage: nextZoneDamage,
-          })
-        }
-        if (!disabledEmittedRef.current && nextTotalDamage >= MAX_DAMAGE) {
-          disabledEmittedRef.current = true
-          emitPhysicsEventV2('vehicle_disabled', {
-            apiVersion: PHYSICS_API_VERSION_V2,
-            totalDamage: nextTotalDamage,
-            reason: 'damage_limit',
-          })
-        }
-        playCollisionSound(impact.material === 'metal' || impact.material === 'rock', planarSpeed)
-        const hitStrength = Math.min(
-          1,
-          Math.max(
-            0.16,
-            planarSpeed / 11 +
-              (impact.material === 'metal' || impact.material === 'rock' ? 0.25 : impact.material === 'wood' ? 0.1 : 0),
-          ),
-        )
-        shakeStrengthRef.current = Math.max(shakeStrengthRef.current, hitStrength * 0.45)
-        sparkStrengthRef.current = Math.max(sparkStrengthRef.current, hitStrength)
-        triggerHitFx(hitStrength, getImpactLabel(impact.material, impact.tier))
-        lastDamageAt.current = now
       }}
       onCollisionExit={(payload) => {
-        const material = normalizeCollisionMaterialV2(getCollisionMaterial(payload.other.rigidBodyObject?.name ?? ''))
-        if (material === 'metal' || material === 'rock') {
-          hardContactCountRef.current = Math.max(0, hardContactCountRef.current - 1)
-        }
-        setPhysicsTelemetry({
-          hardContactCount: hardContactCountRef.current,
-          nanGuardTrips: nanGuardTripsRef.current,
-          speedClampTrips: speedClampTripsRef.current,
+        handlePlayerCollisionExit({
+          otherName: payload.other.rigidBodyObject?.name ?? '',
+          hardContactCountRef,
+          nanGuardTripsRef,
+          speedClampTripsRef,
+          setPhysicsTelemetry,
         })
       }}
     >

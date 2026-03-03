@@ -7,10 +7,12 @@ import { createRoomId, getRoomIdFromUrl, isMultiplayerConfigured, setRoomIdInUrl
 import { stopEngineSound } from './game/sfx'
 import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
+import { GarageOverlay } from './game/ui/builder/GarageOverlay'
 
 export const App = () => {
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
   const [manualPaused, setManualPaused] = useState(false)
+  const [garageOpen, setGarageOpen] = useState(false)
   const [tabInactive, setTabInactive] = useState(() => (typeof document !== 'undefined' ? document.hidden : false))
   const [roomId, setRoomId] = useState<string | null>(() => getRoomIdFromUrl())
   const [isRoomHost, setIsRoomHost] = useState(false)
@@ -24,7 +26,7 @@ export const App = () => {
     return window.matchMedia('(pointer: coarse)').matches
   }, [])
   const lowPowerMode = batterySaverMode === 'on' || (batterySaverMode === 'auto' && touchDevice)
-  const paused = manualPaused || tabInactive
+  const paused = manualPaused || tabInactive || garageOpen
   const mapGravity = useMemo(
     () => getTrackMap(selectedMapId, proceduralMapSeed).gravity,
     [selectedMapId, proceduralMapSeed],
@@ -93,6 +95,11 @@ export const App = () => {
         </Physics>
       </Canvas>
       <Hud
+        onOpenGarage={() => setGarageOpen(true)}
+      />
+      <GarageOverlay
+        isOpen={garageOpen}
+        onClose={() => setGarageOpen(false)}
         roomId={roomId}
         isRoomHost={isRoomHost}
         multiplayerEnabled={isMultiplayerConfigured()}

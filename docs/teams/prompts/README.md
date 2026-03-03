@@ -1,15 +1,14 @@
-# Agent Session Prompts
+# Team Prompts (Current Sprint)
 
 Use one prompt per agent session.
 
-- Team 01: `PROMPT-team-01-physics-destruction.md`
-- Team 02: `PROMPT-team-02-worlds-maps-gravity.md`
-- Team 03: `PROMPT-team-03-vehicle-builder.md`
-- Team 04: `PROMPT-team-04-immersion-audio-visual.md`
-- Merge Agent: `PROMPT-team-05-merge-integration.md`
+- Team 01: `PROMPT-team-01-rendering-modes.md`
+- Team 02: `PROMPT-team-02-physics-collision-jump.md`
+- Team 03: `PROMPT-team-03-map-geometry-interactables.md`
+- Team 04: `PROMPT-team-04-performance-optimization.md`
 
-Recommended flow:
-1. Run `scripts/setup-worktrees.sh`.
-2. Start one agent in each worktree directory.
-3. Give each agent the matching prompt.
-
+Suggested setup:
+1. Run `scripts/setup-worktrees.sh` (or create equivalent worktrees manually).
+2. Start one agent in each team worktree.
+3. Paste the matching prompt into each agent session.
+4. Merge only after each team passes `npm run lint` and `npm run build`.

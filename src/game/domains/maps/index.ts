@@ -1,0 +1,2 @@
+export { createMapSlice } from './storeSlice'
+

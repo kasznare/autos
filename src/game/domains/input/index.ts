@@ -1,0 +1,2 @@
+export { createInputSlice } from './storeSlice'
+
