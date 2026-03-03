@@ -9,7 +9,10 @@ import {
   ForestCritter,
   Ground,
   IntactDestructible,
+  MapEnvironment,
+  MapInteractables,
   MovableObstacle,
+  PathLaneMarkers,
   PickupItem,
   ProceduralGround,
   RemoteCar,
@@ -46,7 +49,24 @@ export const GameScene = ({
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
   const activeMovableObstacles = useMemo(() => map.spawnRules.obstacles.movable, [map])
-  const spawnObstacles = useMemo(() => [...activeStaticObstacles, ...activeMovableObstacles], [activeStaticObstacles, activeMovableObstacles])
+  const mapSpawnObstacles = useMemo(
+    () =>
+      map.interactables
+        .filter((item) => item.collider !== 'none')
+        .map((item) => ({
+          id: item.id,
+          position: item.position,
+          size: item.size,
+          material: item.material,
+          movable: item.collider === 'dynamic',
+          color: item.color,
+        })),
+    [map.interactables],
+  )
+  const spawnObstacles = useMemo(
+    () => [...activeStaticObstacles, ...activeMovableObstacles, ...mapSpawnObstacles],
+    [activeStaticObstacles, activeMovableObstacles, mapSpawnObstacles],
+  )
   const initialPickups = useMemo(() => map.spawnRules.pickups.initial, [map])
   const initialDestructibles = useMemo<RuntimeDestructible[]>(
     () =>
@@ -108,16 +128,23 @@ export const GameScene = ({
       {map.shape === 'ring' ? (
         <>
           <Ground worldHalf={map.worldHalf} />
-          <RoadLoop outerHalf={map.outerHalf} innerHalf={map.innerHalf} />
+          <RoadLoop map={map} />
           <Curbs outerHalf={map.outerHalf} innerHalf={map.innerHalf} />
         </>
       ) : (
         <ProceduralGround map={map} />
       )}
       <CheckpointGates gates={map.gates} />
-      {map.shape === 'path' ? <RoadPath map={map} /> : null}
+      {map.shape === 'path' ? (
+        <>
+          <RoadPath map={map} />
+          <PathLaneMarkers map={map} />
+        </>
+      ) : null}
       <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} />
       <Trees trees={map.trees} map={map} />
+      <MapEnvironment objects={map.environmentObjects} restartToken={restartToken} />
+      <MapInteractables map={map} restartToken={restartToken} />
       {map.shape === 'path' ? (
         <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} />
       ) : null}

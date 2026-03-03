@@ -2,7 +2,7 @@ import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
 import { useMemo } from 'react'
 import { CanvasTexture, PlaneGeometry, RepeatWrapping } from 'three'
 import { TRACK_SIZE } from '../config'
-import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
+import { getRingLaneGuideHalfSizes, getRoadDetailCount, isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
 
 const TERRAIN_MESH_SEGMENTS = 280
 
@@ -70,7 +70,7 @@ export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) =
   )
 }
 
-export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHalf: number }) => {
+export const RoadLoop = ({ map }: { map: TrackMap }) => {
   const roadTexture = useMemo(() => {
     const canvas = document.createElement('canvas')
     canvas.width = 1024
@@ -80,15 +80,13 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
       return null
     }
 
-    const toCanvas = (v: number) => ((v / TRACK_SIZE) + 0.5) * canvas.width
+    const worldSize = map.worldHalf * 2
+    const toCanvas = (v: number) => ((v / worldSize) + 0.5) * canvas.width
 
-    const outerMin = toCanvas(-outerHalf)
-    const outerMax = toCanvas(outerHalf)
-    const innerMin = toCanvas(-innerHalf)
-    const innerMax = toCanvas(innerHalf)
-    const midHalf = (outerHalf + innerHalf) / 2
-    const midMin = toCanvas(-midHalf)
-    const midMax = toCanvas(midHalf)
+    const outerMin = toCanvas(-map.outerHalf)
+    const outerMax = toCanvas(map.outerHalf)
+    const innerMin = toCanvas(-map.innerHalf)
+    const innerMax = toCanvas(map.innerHalf)
 
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
@@ -103,21 +101,26 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
     ctx.lineWidth = 10
     ctx.strokeRect(outerMin + 4, outerMin + 4, outerMax - outerMin - 8, outerMax - outerMin - 8)
 
-    ctx.strokeStyle = '#f7f7f0'
-    ctx.lineWidth = 6
-    ctx.setLineDash([24, 18])
-    ctx.strokeRect(midMin, midMin, midMax - midMin, midMax - midMin)
+    const laneGuides = getRingLaneGuideHalfSizes(map)
+    laneGuides.forEach((half, idx) => {
+      const min = toCanvas(-half)
+      const max = toCanvas(half)
+      ctx.strokeStyle = idx === Math.floor(laneGuides.length / 2) ? '#f6f3de' : 'rgba(238, 238, 236, 0.82)'
+      ctx.lineWidth = idx === Math.floor(laneGuides.length / 2) ? 5 : 3
+      ctx.setLineDash([22, 16])
+      ctx.strokeRect(min, min, max - min, max - min)
+    })
     ctx.setLineDash([])
 
     const texture = new CanvasTexture(canvas)
     texture.wrapS = RepeatWrapping
     texture.wrapT = RepeatWrapping
     return texture
-  }, [outerHalf, innerHalf])
+  }, [map])
 
   return (
     <mesh receiveShadow position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[TRACK_SIZE, TRACK_SIZE]} />
+      <planeGeometry args={[map.worldHalf * 2, map.worldHalf * 2]} />
       <meshStandardMaterial map={roadTexture} transparent roughness={0.92} metalness={0.12} />
     </mesh>
   )
@@ -202,6 +205,60 @@ export const RoadPath = ({ map }: { map: TrackMap }) => {
     <mesh receiveShadow geometry={roadGeometry}>
       <meshStandardMaterial map={roadTexture} transparent roughness={0.92} metalness={0.12} />
     </mesh>
+  )
+}
+
+export const PathLaneMarkers = ({ map }: { map: TrackMap }) => {
+  const markers = useMemo(() => {
+    if (map.shape !== 'path' || map.roadPath.length < 2 || map.laneCount <= 1) {
+      return []
+    }
+    const laneWidth = map.laneWidth > 0 ? map.laneWidth : map.roadWidth / map.laneCount
+    const dashLen = Math.max(2.8, laneWidth * 0.9)
+    const gapLen = Math.max(2.2, laneWidth * 0.7)
+    const stride = dashLen + gapLen
+    const out: Array<{ id: string; position: [number, number, number]; rotation: [number, number, number]; length: number }> = []
+
+    for (let i = 0; i < map.roadPath.length; i += 1) {
+      const a = map.roadPath[i]
+      const b = map.roadPath[(i + 1) % map.roadPath.length]
+      const dx = b[0] - a[0]
+      const dz = b[1] - a[1]
+      const segLen = Math.hypot(dx, dz)
+      if (segLen < 0.001) {
+        continue
+      }
+      const dirX = dx / segLen
+      const dirZ = dz / segLen
+      const normalX = dirZ
+      const normalZ = -dirX
+      const yaw = Math.atan2(dx, dz)
+      for (let lane = 1; lane < map.laneCount; lane += 1) {
+        const offset = -map.roadWidth * 0.5 + laneWidth * lane
+        for (let along = 0.7; along < segLen - 0.7; along += stride) {
+          const x = a[0] + dirX * along + normalX * offset
+          const z = a[1] + dirZ * along + normalZ * offset
+          out.push({
+            id: `lane-${i}-${lane}-${Math.round(along * 10)}`,
+            position: [x, sampleTerrainHeight(map, x, z) + 0.05, z],
+            rotation: [0, yaw, 0],
+            length: Math.min(dashLen, segLen - along),
+          })
+        }
+      }
+    }
+    return out
+  }, [map])
+
+  return (
+    <group>
+      {markers.map((marker) => (
+        <mesh key={marker.id} position={marker.position} rotation={marker.rotation} receiveShadow>
+          <boxGeometry args={[0.18, 0.03, marker.length]} />
+          <meshStandardMaterial color="#f8f4dc" roughness={0.52} />
+        </mesh>
+      ))}
+    </group>
   )
 }
 
@@ -467,7 +524,7 @@ export const Trees = ({
 export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) => {
   const details = useMemo(() => {
     const out: Array<{ id: string; type: 'rock' | 'bush'; position: [number, number, number]; scale: number }> = []
-    const maxItems = map.shape === 'path' ? 180 : 70
+    const maxItems = getRoadDetailCount(map)
     const half = map.worldHalf - 4
     for (let i = 0; i < 900 && out.length < maxItems; i += 1) {
       const nx = pseudoNoise(seed + i, 201) * 2 - 1
@@ -508,4 +565,3 @@ export const RoadsideDetails = ({ map, seed }: { map: TrackMap; seed: number }) 
     </group>
   )
 }
-

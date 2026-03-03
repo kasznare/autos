@@ -588,6 +588,20 @@ body {
   margin-top: 0.4rem;
 }
 
+.map-picker-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #2b607b;
+}
+
+.map-picker-header strong {
+  color: #184a65;
+}
+
 .multiplayer-row {
   margin-top: 0.4rem;
   display: flex;

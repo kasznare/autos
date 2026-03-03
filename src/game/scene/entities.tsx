@@ -4,10 +4,19 @@ import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
 import { useEffect, useMemo, useRef } from 'react'
 import { Group } from 'three'
 import { CarModel } from '../CarModel'
-import { sampleTerrainHeight, type TrackMap } from '../maps'
+import { getLaneOffset, sampleTerrainHeight, type MapInteractable, type MapEnvironmentObject, type TrackMap } from '../maps'
 import type { CarSnapshot } from '../multiplayer'
 import { emitPhysicsEventV2, getMaterialResponseV2, normalizeCollisionMaterialV2 } from '../physics'
-import { interpolateAngle, isPlayerOnTrafficPath, buildTrafficPath, getClosestProgressOnLoop, getLoopLength, sampleLoop, TRAFFIC_CAR_COUNT, type RuntimeCritter } from '../systems'
+import {
+  buildTrafficPath,
+  getClosestProgressOnLoop,
+  getLoopLength,
+  interpolateAngle,
+  isPlayerOnTrafficPath,
+  sampleLoopWithOffset,
+  TRAFFIC_CAR_COUNT,
+  type RuntimeCritter,
+} from '../systems'
 import { PHYSICS_API_VERSION_V2 } from '../types'
 import type { DestructibleProp, Pickup, WorldObstacle } from '../types'
 
@@ -52,6 +61,8 @@ export const TrafficCars = ({
     for (let i = 0; i < TRAFFIC_CAR_COUNT; i += 1) {
       const body = carRefs.current[i]
       if (!body) continue
+      const laneIndex = i % Math.max(1, map.laneCount)
+      const laneOffset = getLaneOffset(map, laneIndex)
       const baseSpeedMps = 5.8 + (i % 3) * 0.8
       let speedScale = 1
       const carProgress = progressRefs.current[i] ?? i / TRAFFIC_CAR_COUNT
@@ -66,7 +77,7 @@ export const TrafficCars = ({
       const speedMps = baseSpeedMps * speedScale
       const advance = (speedMps * delta) / loopLength
       progressRefs.current[i] = (carProgress + advance) % 1
-      const sample = sampleLoop(path, progressRefs.current[i])
+      const sample = sampleLoopWithOffset(path, progressRefs.current[i], laneOffset)
       const y = sampleTerrainHeight(map, sample.x, sample.z) + 0.62
       body.setNextKinematicTranslation({ x: sample.x, y, z: sample.z })
       body.setNextKinematicRotation({ x: 0, y: Math.sin(sample.yaw / 2), z: 0, w: Math.cos(sample.yaw / 2) })
@@ -76,7 +87,9 @@ export const TrafficCars = ({
   return (
     <group>
       {Array.from({ length: TRAFFIC_CAR_COUNT }).map((_, idx) => {
-        const sample = sampleLoop(path, idx / TRAFFIC_CAR_COUNT)
+        const laneIndex = idx % Math.max(1, map.laneCount)
+        const laneOffset = getLaneOffset(map, laneIndex)
+        const sample = sampleLoopWithOffset(path, idx / TRAFFIC_CAR_COUNT, laneOffset)
         const y = sampleTerrainHeight(map, sample.x, sample.z) + 0.62
         const color = idx % 2 === 0 ? '#6ea9ff' : idx % 3 === 0 ? '#f2b34d' : '#92d38a'
         return (
@@ -282,6 +295,145 @@ export const MovableObstacle = ({ obstacle }: { obstacle: WorldObstacle }) => {
   )
 }
 
+const MapInteractableStatic = ({ item, map }: { item: MapInteractable; map: TrackMap }) => (
+  <RigidBody
+    type="fixed"
+    colliders={false}
+    name={`${item.material}-${item.id}`}
+    position={[item.position[0], item.position[1] + sampleTerrainHeight(map, item.position[0], item.position[2]), item.position[2]]}
+    rotation={item.rotation ?? [0, 0, 0]}
+  >
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={item.size} />
+      <meshStandardMaterial color={item.color} roughness={0.74} />
+    </mesh>
+    <CuboidCollider args={[item.size[0] / 2, item.size[1] / 2, item.size[2] / 2]} />
+  </RigidBody>
+)
+
+const MapInteractableDynamic = ({ item, map }: { item: MapInteractable; map: TrackMap }) => (
+  <RigidBody
+    colliders={false}
+    name={`${item.material}-${item.id}`}
+    position={[item.position[0], item.position[1] + sampleTerrainHeight(map, item.position[0], item.position[2]), item.position[2]]}
+    rotation={item.rotation ?? [0, 0, 0]}
+    mass={0.45}
+    friction={0.78}
+    restitution={0.08}
+    linearDamping={0.9}
+    angularDamping={0.84}
+  >
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={item.size} />
+      <meshStandardMaterial color={item.color} roughness={0.77} />
+    </mesh>
+    <CuboidCollider args={[item.size[0] / 2, item.size[1] / 2, item.size[2] / 2]} />
+  </RigidBody>
+)
+
+export const MapInteractables = ({ map, restartToken }: { map: TrackMap; restartToken: number }) => (
+  <group>
+    {map.interactables.map((item) => {
+      if (item.collider === 'none') {
+        return (
+          <mesh
+            key={`${item.id}-none`}
+            castShadow
+            receiveShadow
+            position={[item.position[0], item.position[1] + sampleTerrainHeight(map, item.position[0], item.position[2]), item.position[2]]}
+            rotation={item.rotation ?? [0, 0, 0]}
+          >
+            <boxGeometry args={item.size} />
+            <meshStandardMaterial color={item.color} roughness={0.78} />
+          </mesh>
+        )
+      }
+      if (item.collider === 'dynamic') {
+        return <MapInteractableDynamic key={`${item.id}-${restartToken}`} item={item} map={map} />
+      }
+      return <MapInteractableStatic key={item.id} item={item} map={map} />
+    })}
+  </group>
+)
+
+export const MapEnvironment = ({ objects, restartToken }: { objects: MapEnvironmentObject[]; restartToken: number }) => {
+  const birdRefs = useRef<Record<string, Group | null>>({})
+  useFrame(({ clock }) => {
+    objects.forEach((item, idx) => {
+      if (item.kind !== 'bird') {
+        return
+      }
+      const ref = birdRefs.current[item.id]
+      if (!ref) {
+        return
+      }
+      const t = clock.elapsedTime
+      const speed = item.speed ?? 1
+      const radius = 2.8 + idx * 0.72
+      ref.position.x = item.position[0] + Math.sin(t * speed + idx) * radius
+      ref.position.z = item.position[2] + Math.cos(t * speed * 0.9 + idx) * radius
+      ref.position.y = item.position[1] + Math.sin(t * speed * 1.7 + idx * 0.6) * 0.8
+      ref.rotation.y = Math.atan2(Math.cos(t * speed + idx), -Math.sin(t * speed + idx))
+    })
+  })
+
+  return (
+    <group key={`map-env-${restartToken}`}>
+      {objects.map((item) => {
+        if (item.kind === 'sun') {
+          return (
+            <mesh key={item.id} position={item.position}>
+              <sphereGeometry args={[item.scale, 18, 18]} />
+              <meshStandardMaterial color={item.color} emissive={item.color} emissiveIntensity={0.6} toneMapped={false} />
+            </mesh>
+          )
+        }
+        if (item.kind === 'cloud') {
+          return (
+            <group key={item.id} position={item.position} scale={item.scale}>
+              <mesh position={[-1.3, 0, 0]}>
+                <sphereGeometry args={[1.2, 10, 10]} />
+                <meshStandardMaterial color={item.color} roughness={0.95} />
+              </mesh>
+              <mesh position={[0, 0.3, 0]}>
+                <sphereGeometry args={[1.55, 10, 10]} />
+                <meshStandardMaterial color={item.color} roughness={0.95} />
+              </mesh>
+              <mesh position={[1.35, 0.05, 0]}>
+                <sphereGeometry args={[1.1, 10, 10]} />
+                <meshStandardMaterial color={item.color} roughness={0.95} />
+              </mesh>
+            </group>
+          )
+        }
+        return (
+          <group
+            key={item.id}
+            ref={(el) => {
+              birdRefs.current[item.id] = el
+            }}
+            position={item.position}
+            scale={item.scale}
+          >
+            <mesh castShadow>
+              <sphereGeometry args={[0.2, 7, 7]} />
+              <meshStandardMaterial color={item.color} roughness={0.85} />
+            </mesh>
+            <mesh castShadow position={[-0.2, 0, -0.05]} rotation={[0, 0.4, 0.3]}>
+              <boxGeometry args={[0.26, 0.04, 0.18]} />
+              <meshStandardMaterial color={item.color} roughness={0.85} />
+            </mesh>
+            <mesh castShadow position={[0.2, 0, -0.05]} rotation={[0, -0.4, -0.3]}>
+              <boxGeometry args={[0.26, 0.04, 0.18]} />
+              <meshStandardMaterial color={item.color} roughness={0.85} />
+            </mesh>
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
 export const IntactDestructible = ({
   destructible,
   map,
@@ -411,4 +563,3 @@ export const RemoteCar = ({ car, lowPowerMode }: { car: RemoteCarState; lowPower
     </group>
   )
 }
-
