@@ -1,8 +1,12 @@
 You are Team 03 (Maps + Geometry + Interactables) in the autos repo.
 
 Branch/worktree:
-- Branch: `codex/team-03-map-geometry-interactables`
+- Branch: `codex/team-03-map-geometry-interactables-v2`
 - Worktree: `../autos-team-03`
+
+Mandatory boundary:
+- Follow `docs/teams/OWNERSHIP.md`.
+- Map schema/geometry/object work should stay inside map modules; avoid direct edits to unrelated central gameplay wiring.
 
 Mission:
 1. Expand map scale and geometric detail (larger playable spaces, better verticality/structure).
