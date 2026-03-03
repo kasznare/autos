@@ -1,4 +1,5 @@
 import type { KeyboardControlsEntry } from '@react-three/drei'
+import type { VehicleSpec, VehicleSpecLimits } from './types'
 
 export const MAX_DAMAGE = 100
 export const PLAYER_BODY_NAME = 'player-car'
@@ -7,7 +8,7 @@ export const ROAD_OUTER_HALF = 23
 export const ROAD_INNER_HALF = 11
 
 export type ControlName = 'forward' | 'backward' | 'left' | 'right' | 'restart'
-export type CarProfileId = 'steady' | 'speedy' | 'heavy'
+export type VehiclePresetId = 'balanced' | 'sprinter' | 'bulldozer' | 'drifter'
 
 export const INPUT_MAP: KeyboardControlsEntry<ControlName>[] = [
   { name: 'forward', keys: ['ArrowUp', 'KeyW'] },
@@ -80,55 +81,56 @@ export const DAMAGE_SPUTTER = {
   throttleFactor: 0.18,
 }
 
-export const CAR_PROFILES: Record<
-  CarProfileId,
-  {
-    label: string
-    accelMult: number
-    topSpeedMult: number
-    reverseSpeedMult: number
-    steeringMult: number
-    gripMult: number
-    damageTakenMult: number
-    mass: number
-    engineTone: 'steady' | 'speedy' | 'heavy'
-  }
-> = {
-  steady: {
-    label: 'Steady',
-    accelMult: 1,
-    topSpeedMult: 1,
-    reverseSpeedMult: 1,
-    steeringMult: 1,
-    gripMult: 1.03,
-    damageTakenMult: 0.9,
-    mass: 1.25,
-    engineTone: 'steady',
+export const VEHICLE_SPEC_LIMITS: VehicleSpecLimits = {
+  power: {
+    acceleration: { min: 20, max: 85, step: 1 },
+    topSpeed: { min: 20, max: 90, step: 1 },
   },
-  speedy: {
-    label: 'Speedy',
-    accelMult: 1.16,
-    // ~75 km/h on road (13.89 * 1.5 m/s).
-    topSpeedMult: 1.5,
-    reverseSpeedMult: 1.08,
-    steeringMult: 1.08,
-    gripMult: 0.94,
-    damageTakenMult: 1.2,
-    mass: 1.08,
-    engineTone: 'speedy',
+  handling: {
+    grip: { min: 25, max: 90, step: 1 },
+    drift: { min: 10, max: 85, step: 1 },
+    brake: { min: 25, max: 90, step: 1 },
   },
-  heavy: {
-    label: 'Heavy',
-    accelMult: 0.84,
-    // ~25 km/h on road (13.89 * 0.5 m/s).
-    topSpeedMult: 0.5,
-    reverseSpeedMult: 0.88,
-    steeringMult: 0.86,
-    gripMult: 1.08,
-    damageTakenMult: 0.72,
-    mass: 1.62,
-    engineTone: 'heavy',
+  // Sum of positive trait deltas above neutral (50) across five sliders.
+  balanceBudget: 78,
+  // Per-slider maximum delta above neutral (50).
+  maxPositiveBias: 35,
+}
+
+export const VEHICLE_PRESETS: Record<VehiclePresetId, VehicleSpec> = {
+  balanced: {
+    name: 'Balanced Scout',
+    chassisSize: 'standard',
+    massClass: 'balanced',
+    power: { acceleration: 52, topSpeed: 52 },
+    handling: { grip: 56, drift: 34, brake: 55 },
+    cosmetics: { bodyColor: '#1e63f0', accentColor: '#d6ebff' },
+  },
+  sprinter: {
+    name: 'Sprinter',
+    chassisSize: 'compact',
+    massClass: 'light',
+    power: { acceleration: 73, topSpeed: 78 },
+    handling: { grip: 48, drift: 46, brake: 42 },
+    cosmetics: { bodyColor: '#f49b1a', accentColor: '#fff1de' },
+  },
+  bulldozer: {
+    name: 'Bulldozer',
+    chassisSize: 'large',
+    massClass: 'heavy',
+    power: { acceleration: 38, topSpeed: 36 },
+    handling: { grip: 66, drift: 16, brake: 74 },
+    cosmetics: { bodyColor: '#d83b2d', accentColor: '#ffe3dd' },
+  },
+  drifter: {
+    name: 'Drifter',
+    chassisSize: 'standard',
+    massClass: 'light',
+    power: { acceleration: 62, topSpeed: 68 },
+    handling: { grip: 42, drift: 72, brake: 45 },
+    cosmetics: { bodyColor: '#8f4df2', accentColor: '#efe2ff' },
   },
 }
 
-export const CAR_PROFILE_ORDER: CarProfileId[] = ['steady', 'speedy', 'heavy']
+export const VEHICLE_PRESET_ORDER: VehiclePresetId[] = ['balanced', 'sprinter', 'bulldozer', 'drifter']
+export const DEFAULT_VEHICLE_PRESET_ID: VehiclePresetId = 'balanced'

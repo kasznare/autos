@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { CAR_COLOR_OPTIONS, CAR_PROFILE_ORDER, CAR_PROFILES, MAX_DAMAGE } from './config'
+import { MAX_DAMAGE } from './config'
 import { resetVirtualInput, setVirtualInput } from './keys'
 import { MAP_LABELS, MAP_ORDER } from './maps'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
+import { VehicleBuilder } from './ui/builder/VehicleBuilder'
 
 type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'restart'
 
@@ -63,8 +64,6 @@ export const Hud = ({
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const mission = useGameStore((state) => state.mission)
   const gamepadConnected = useGameStore((state) => state.gamepadConnected)
@@ -76,8 +75,6 @@ export const Hud = ({
   const setBatterySaverMode = useGameStore((state) => state.setBatterySaverMode)
   const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
   const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
-  const setSelectedCarColor = useGameStore((state) => state.setSelectedCarColor)
-  const setSelectedCarProfile = useGameStore((state) => state.setSelectedCarProfile)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
 
@@ -155,31 +152,7 @@ export const Hud = ({
           </div>
         </div>
 
-        <div className="color-picker">
-          {CAR_COLOR_OPTIONS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={`color-swatch${selectedCarColor === color ? ' active' : ''}`}
-              style={{ background: color }}
-              onClick={() => setSelectedCarColor(color)}
-              aria-label={`Select car color ${color}`}
-            />
-          ))}
-        </div>
-
-        <div className="profile-picker">
-          {CAR_PROFILE_ORDER.map((profileId) => (
-            <button
-              key={profileId}
-              type="button"
-              className={`profile-chip${selectedCarProfile === profileId ? ' active' : ''}`}
-              onClick={() => setSelectedCarProfile(profileId)}
-            >
-              {CAR_PROFILES[profileId].label}
-            </button>
-          ))}
-        </div>
+        <VehicleBuilder />
 
         <div className="map-picker">
           {MAP_ORDER.map((mapId) => (

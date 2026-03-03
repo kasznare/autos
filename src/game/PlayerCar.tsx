@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Group, Vector3 } from 'three'
 import { CarModel } from './CarModel'
-import { CAR_PROFILES, DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
+import { DAMAGE_DRIVE_EFFECTS, DAMAGE_SPUTTER, DAMAGE_TIERS, DRIVE_SURFACE, KID_TUNING, MAX_DAMAGE, PLAYER_BODY_NAME, VEHICLE_PHYSICS } from './config'
 import { applyKey, createInputState, getMergedInput, keyCodeToInput, resetGamepadInput, setGamepadInput } from './keys'
 import { getTrackMap, isPointOnRoad, sampleTerrainHeight } from './maps'
 import { playCollisionSound, playPickupSound, setEngineMuted, stopEngineSound, unlockAudio, updateEngineSound } from './sfx'
@@ -37,10 +37,10 @@ const normalizeAngleDelta = (angle: number) => {
   return out
 }
 
-const getCarPalette = (baseHex: string, damage: number) => {
+const getCarPalette = (baseHex: string, accentHex: string, damage: number) => {
   const t = Math.min(1, Math.max(0, damage / MAX_DAMAGE))
   const body = tempColor.set(baseHex).clone().lerp(warningColor, t * 0.65)
-  const accent = tempColor.set(baseHex).clone().lerp(new Color('#f2f2f2'), 0.75 - t * 0.35)
+  const accent = tempColor.set(accentHex).clone().lerp(new Color('#f2f2f2'), 0.35 - t * 0.2)
   return {
     body: `#${body.getHexString()}`,
     accent: `#${accent.getHexString()}`,
@@ -106,8 +106,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const damage = useGameStore((state) => state.damage)
   const status = useGameStore((state) => state.status)
   const engineMuted = useGameStore((state) => state.engineMuted)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const vehicleSpec = useGameStore((state) => state.vehicleSpec)
+  const vehiclePhysicsTuning = useGameStore((state) => state.vehiclePhysicsTuning)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
   const restartToken = useGameStore((state) => state.restartToken)
@@ -120,8 +120,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const setTelemetry = useGameStore((state) => state.setTelemetry)
   const setGamepadConnected = useGameStore((state) => state.setGamepadConnected)
 
-  const palette = useMemo(() => getCarPalette(selectedCarColor, damage), [selectedCarColor, damage])
-  const profile = CAR_PROFILES[selectedCarProfile]
+  const palette = useMemo(
+    () => getCarPalette(vehicleSpec.cosmetics.bodyColor, vehicleSpec.cosmetics.accentColor, damage),
+    [vehicleSpec.cosmetics.accentColor, vehicleSpec.cosmetics.bodyColor, damage],
+  )
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const crackOpacity = Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
   const startPosition = useMemo(() => {
@@ -299,7 +301,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
     if (status === 'lost') {
       setTelemetry(0, 0)
-      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: profile.engineTone })
+      updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: vehiclePhysicsTuning.engineTone })
       if (inputRef.current.restart) {
         restartRun()
       }
@@ -348,8 +350,8 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const wantsForward = effectiveThrottle > 0.02
     const wantsBackward = effectiveThrottle < -0.02
     const throttleAbs = Math.min(1, Math.abs(effectiveThrottle))
-    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * profile.accelMult
-    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * profile.accelMult * 1.25
+    const forwardAccel = surfaceConfig.forwardAcceleration * accelScale * vehiclePhysicsTuning.accelMult
+    const reverseAccel = surfaceConfig.reverseAcceleration * accelScale * vehiclePhysicsTuning.accelMult * 1.25
 
     if (wantsForward && nextForwardSpeed >= -0.15) {
       nextForwardSpeed += throttleAbs * forwardAccel * delta
@@ -358,9 +360,9 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
 
     if (wantsBackward && nextForwardSpeed > 0) {
-      nextForwardSpeed -= VEHICLE_PHYSICS.brakeDecel * delta
+      nextForwardSpeed -= VEHICLE_PHYSICS.brakeDecel * vehiclePhysicsTuning.brakeMult * delta
     } else if (wantsForward && nextForwardSpeed < 0) {
-      nextForwardSpeed += VEHICLE_PHYSICS.reverseBrakeDecel * delta
+      nextForwardSpeed += VEHICLE_PHYSICS.reverseBrakeDecel * vehiclePhysicsTuning.brakeMult * delta
     }
 
     if (Math.abs(throttle) < 0.02) {
@@ -372,13 +374,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const dragForce = (VEHICLE_PHYSICS.rollingResistance * speedAbs + VEHICLE_PHYSICS.aeroDrag * speedAbs * speedAbs) * delta
     nextForwardSpeed -= Math.sign(nextForwardSpeed) * Math.min(speedAbs, dragForce)
 
-    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * profile.topSpeedMult
-    const maxReverseSpeed = surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * profile.reverseSpeedMult * 1.2
+    const maxForwardSpeed = surfaceConfig.forwardTopSpeed * speedScale * vehiclePhysicsTuning.topSpeedMult
+    const maxReverseSpeed =
+      surfaceConfig.reverseTopSpeed * (0.92 + speedScale * 0.2) * vehiclePhysicsTuning.reverseSpeedMult * 1.2
     nextForwardSpeed = Math.max(maxReverseSpeed, Math.min(maxForwardSpeed, nextForwardSpeed))
 
     const gripLerp = Math.min(
       1,
-      delta * (6.4 + Math.abs(nextForwardSpeed) * 0.45) * gripScale * surfaceConfig.gripFactor * profile.gripMult,
+      delta *
+        (6.4 + Math.abs(nextForwardSpeed) * 0.45) *
+        gripScale *
+        surfaceConfig.gripFactor *
+        vehiclePhysicsTuning.gripMult,
     )
     const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
 
@@ -389,12 +396,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       VEHICLE_PHYSICS.maxSteerRad *
       (0.55 + speedSteerScale * 0.45) *
       steeringScale *
-      profile.steeringMult
+      vehiclePhysicsTuning.steeringMult
     const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
     steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
     const reverseSteer = nextForwardSpeed < -0.15 ? -0.55 : 1
     const targetYawRate =
-      ((nextForwardSpeed / VEHICLE_PHYSICS.wheelBase) * Math.tan(steerAngleRef.current) * reverseSteer) /
+      ((nextForwardSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) *
+        Math.tan(steerAngleRef.current) *
+        reverseSteer) /
       Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
     const yawBlend = Math.min(1, delta * 10)
     yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
@@ -452,7 +461,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       scrapeDamageTimerRef.current += delta
       if (scrapeDamageTimerRef.current >= 0.72) {
         scrapeDamageTimerRef.current = 0
-        const scrapeDamage = Math.round(profile.damageTakenMult * KID_TUNING.damageTakenScale * (armorActive ? KID_TUNING.armorDamageScale : 1))
+        const scrapeDamage = Math.round(
+          vehiclePhysicsTuning.damageTakenMult *
+            KID_TUNING.damageTakenScale *
+            (armorActive ? KID_TUNING.armorDamageScale : 1),
+        )
         if (scrapeDamage > 0) {
           addDamage(scrapeDamage)
           triggerHitFx(0.2, getImpactLabel('hard', scrapeDamage, true))
@@ -471,7 +484,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       direction: engineDirection,
       surface: onRoad ? 'road' : 'grass',
       engineLoad,
-      tone: profile.engineTone,
+      tone: vehiclePhysicsTuning.engineTone,
     })
 
     const camPosSmoothing = 1 - Math.exp(-delta * 9)
@@ -580,7 +593,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       ccd
       angularDamping={1.8}
       linearDamping={0.18}
-      mass={profile.mass}
+      mass={vehiclePhysicsTuning.mass}
       onCollisionEnter={(payload) => {
         if (status === 'lost') {
           return
@@ -629,7 +642,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
           1,
           Math.round(
             damageDelta *
-              profile.damageTakenMult *
+              vehiclePhysicsTuning.damageTakenMult *
               KID_TUNING.damageTakenScale *
               (armorTimerRef.current > 0 ? KID_TUNING.armorDamageScale : 1),
           ),
@@ -652,21 +665,23 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         }
       }}
     >
-      <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
-      <CarModel
-        bodyColor={palette.body}
-        accentColor={palette.accent}
-        damage={damage}
-        lowPowerMode={lowPowerMode}
-        showTrail
-        crackOpacity={crackOpacity}
-        bumperRef={bumperRef}
-        loosePanelRef={loosePanelRef}
-        hoodRef={hoodRef}
-        roofRef={roofRef}
-        leftDoorRef={leftDoorRef}
-        rightDoorRef={rightDoorRef}
-      />
+      <group scale={vehiclePhysicsTuning.scale}>
+        <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
+        <CarModel
+          bodyColor={palette.body}
+          accentColor={palette.accent}
+          damage={damage}
+          lowPowerMode={lowPowerMode}
+          showTrail
+          crackOpacity={crackOpacity}
+          bumperRef={bumperRef}
+          loosePanelRef={loosePanelRef}
+          hoodRef={hoodRef}
+          roofRef={roofRef}
+          leftDoorRef={leftDoorRef}
+          rightDoorRef={rightDoorRef}
+        />
+      </group>
       {damage >= 70 && damage < MAX_DAMAGE ? (
         <group position={[0, 1.05, -0.8]}>
           <mesh>

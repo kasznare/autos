@@ -1089,8 +1089,7 @@ export const GameScene = ({
   const restartToken = useGameStore((state) => state.restartToken)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
-  const selectedCarColor = useGameStore((state) => state.selectedCarColor)
-  const selectedCarProfile = useGameStore((state) => state.selectedCarProfile)
+  const vehicleSpec = useGameStore((state) => state.vehicleSpec)
   const advanceMission = useGameStore((state) => state.advanceMission)
   const setMissionProgress = useGameStore((state) => state.setMissionProgress)
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
@@ -1347,8 +1346,9 @@ export const GameScene = ({
           y: p[1],
           z: p[2],
           yaw: headingRef.current,
-          color: selectedCarColor,
-          profile: selectedCarProfile,
+          color: vehicleSpec.cosmetics.bodyColor,
+          buildName: vehicleSpec.name,
+          massClass: vehicleSpec.massClass,
           sentAt: performance.now(),
         })
       }
