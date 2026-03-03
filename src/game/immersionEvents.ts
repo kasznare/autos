@@ -1,4 +1,3 @@
-import type { CarProfileId } from './config'
 import type { MapId } from './maps'
 import type { CollisionMaterial } from './types'
 
@@ -38,7 +37,7 @@ export type ImmersionEventMap = {
     terrainAmplitude: number
   }
   build_profile_changed: {
-    profile: CarProfileId
+    profile: string
     color: string
     engineTone: 'steady' | 'speedy' | 'heavy'
   }
