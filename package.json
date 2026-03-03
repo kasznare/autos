@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "maps:smoke": "tsx scripts/smoke-maps.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:builds": "tsx scripts/verify-vehicle-builds.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

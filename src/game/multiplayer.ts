@@ -7,7 +7,8 @@ export type CarSnapshot = {
   z: number
   yaw: number
   color: string
-  profile: string
+  buildName: string
+  massClass: 'light' | 'balanced' | 'heavy'
   sentAt: number
 }
 
