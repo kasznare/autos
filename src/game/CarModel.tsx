@@ -56,10 +56,11 @@ export const CarModel = ({
   const safeWheelSpin = Number.isFinite(wheelSpinRad) ? wheelSpinRad : 0
 
   if (physicsDebugView) {
-    const fl: [number, number, number] = [-0.6, -0.08, 0.8]
-    const fr: [number, number, number] = [0.6, -0.08, 0.8]
-    const rl: [number, number, number] = [-0.6, -0.08, -0.8]
-    const rr: [number, number, number] = [0.6, -0.08, -0.8]
+    const wheelY = 0.04
+    const fl: [number, number, number] = [-0.6, wheelY, 0.8]
+    const fr: [number, number, number] = [0.6, wheelY, 0.8]
+    const rl: [number, number, number] = [-0.6, wheelY, -0.8]
+    const rr: [number, number, number] = [0.6, wheelY, -0.8]
     const afl: [number, number, number] = [-0.42, 0.32, 0.8]
     const afr: [number, number, number] = [0.42, 0.32, 0.8]
     const arl: [number, number, number] = [-0.42, 0.32, -0.8]

@@ -396,8 +396,8 @@ const DEFAULT_WHEEL_CONTACT_POINTS: readonly DynamicsWheelContactPoint[] = [
 ]
 const DRIVE_ANTI_LIFT = {
   minContactRatio: 0.16,
-  upVelClamp: 0.02,
-  downBiasImpulse: 0.28,
+  upVelClamp: 0.22,
+  downBiasImpulse: 0.2,
 }
 const SAFETY_LOCK = {
   disableJump: true,
@@ -736,17 +736,22 @@ export const runVehicleDynamicsStep = ({
     body.applyImpulse({ x: 0, y: -downforce, z: 0 }, true)
   }
   const postDriveVel = body.linvel()
+  const slopeClimbFactor = Math.max(0, Math.min(1, (1 - ny) / 0.42))
+  const maxGroundedUpVel = 0.26 + slopeClimbFactor * 1.22
+  const maxAirUpVel = 0.1
+  const maxAllowedUpVel = contactRatio >= 0.42 ? maxGroundedUpVel : maxAirUpVel
   const noJump = SAFETY_LOCK.disableJump || !input.jump
-  if (postDriveVel.y > 0) {
-    body.setLinvel({ x: postDriveVel.x, y: 0, z: postDriveVel.z }, true)
+  if (postDriveVel.y > maxAllowedUpVel) {
+    body.setLinvel({ x: postDriveVel.x, y: maxAllowedUpVel, z: postDriveVel.z }, true)
   }
   const throttleAbs = Math.abs(throttle * throttleFactor)
   const antiLiftActive = throttleAbs > 0.05 && !input.jump && contactRatio >= DRIVE_ANTI_LIFT.minContactRatio
-  if (antiLiftActive && postDriveVel.y > DRIVE_ANTI_LIFT.upVelClamp) {
+  const antiLiftUpClamp = DRIVE_ANTI_LIFT.upVelClamp + slopeClimbFactor * 0.7
+  if (antiLiftActive && postDriveVel.y > antiLiftUpClamp) {
     body.setLinvel(
       {
         x: postDriveVel.x,
-        y: DRIVE_ANTI_LIFT.upVelClamp,
+        y: antiLiftUpClamp,
         z: postDriveVel.z,
       },
       true,
