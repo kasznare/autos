@@ -1,5 +1,5 @@
 import { Sparkles } from '@react-three/drei'
-import { CuboidCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
+import { CuboidCollider, CylinderCollider, RapierRigidBody, RigidBody, useRevoluteJoint, useSpringJoint } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Group, Vector3 } from 'three'
@@ -41,8 +41,24 @@ const tempVec = new Vector3()
 const tempCamTarget = new Vector3()
 const tempCamPosition = new Vector3()
 const tempBodyPos = new Vector3()
+const WHEEL_LAYOUT = [
+  { x: -0.74, y: -0.12, z: 0.94 },
+  { x: 0.74, y: -0.12, z: 0.94 },
+  { x: -0.74, y: -0.12, z: -0.9 },
+  { x: 0.74, y: -0.12, z: -0.9 },
+] as const
+
+const rotateYawPoint = (x: number, z: number, yaw: number) => ({
+  x: x * Math.cos(yaw) + z * Math.sin(yaw),
+  z: -x * Math.sin(yaw) + z * Math.cos(yaw),
+})
+
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
-  const bodyRef = useRef<RapierRigidBody | null>(null)
+  const bodyRef = useRef<RapierRigidBody>(null!)
+  const wheelFlRef = useRef<RapierRigidBody>(null!)
+  const wheelFrRef = useRef<RapierRigidBody>(null!)
+  const wheelRlRef = useRef<RapierRigidBody>(null!)
+  const wheelRrRef = useRef<RapierRigidBody>(null!)
   const lastDamageAt = useRef(0)
   const inputRef = useRef(createInputState())
   const shakeStrengthRef = useRef(0)
@@ -70,6 +86,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const disabledEmittedRef = useRef(false)
   const nanGuardTripsRef = useRef(0)
   const speedClampTripsRef = useRef(0)
+  const outOfBoundsTimerRef = useRef(0)
   const hitSparkRef = useRef<Group>(null)
   const bumperRef = useRef<Group>(null)
   const loosePanelRef = useRef<Group>(null)
@@ -117,6 +134,25 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     return { x, y, z }
   }, [map])
   const startYaw = map.startYaw
+  const wheelAnchors = useMemo(() => {
+    const [sx, sy, sz] = vehiclePhysicsTuning.scale
+    return WHEEL_LAYOUT.map((wheel) => [wheel.x * sx, wheel.y * sy, wheel.z * sz] as [number, number, number])
+  }, [vehiclePhysicsTuning.scale])
+  const wheelStartPositions = useMemo(() => {
+    return wheelAnchors.map((anchor) => {
+      const rotated = rotateYawPoint(anchor[0], anchor[2], startYaw)
+      return [startPosition.x + rotated.x, startPosition.y + anchor[1], startPosition.z + rotated.z] as [number, number, number]
+    })
+  }, [startPosition.x, startPosition.y, startPosition.z, startYaw, wheelAnchors])
+
+  useSpringJoint(bodyRef, wheelFlRef, [wheelAnchors[0], [0, 0, 0], 0.01, 18, 10])
+  useSpringJoint(bodyRef, wheelFrRef, [wheelAnchors[1], [0, 0, 0], 0.01, 18, 10])
+  useSpringJoint(bodyRef, wheelRlRef, [wheelAnchors[2], [0, 0, 0], 0.01, 18, 10])
+  useSpringJoint(bodyRef, wheelRrRef, [wheelAnchors[3], [0, 0, 0], 0.01, 18, 10])
+  useRevoluteJoint(bodyRef, wheelFlRef, [wheelAnchors[0], [0, 0, 0], [1, 0, 0]])
+  useRevoluteJoint(bodyRef, wheelFrRef, [wheelAnchors[1], [0, 0, 0], [1, 0, 0]])
+  useRevoluteJoint(bodyRef, wheelRlRef, [wheelAnchors[2], [0, 0, 0], [1, 0, 0]])
+  useRevoluteJoint(bodyRef, wheelRrRef, [wheelAnchors[3], [0, 0, 0], [1, 0, 0]])
 
   useEffect(() => {
     const body = bodyRef.current
@@ -128,6 +164,18 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     body.setAngvel({ x: 0, y: 0, z: 0 }, true)
     body.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+    const wheelRefs = [wheelFlRef, wheelFrRef, wheelRlRef, wheelRrRef]
+    wheelRefs.forEach((wheelRef, idx) => {
+      const wheel = wheelRef.current
+      const wheelPos = wheelStartPositions[idx]
+      if (!wheel || !wheelPos) {
+        return
+      }
+      wheel.setTranslation({ x: wheelPos[0], y: wheelPos[1], z: wheelPos[2] }, true)
+      wheel.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      wheel.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      wheel.setRotation({ x: 0, y: Math.sin(startYaw / 2), z: 0, w: Math.cos(startYaw / 2) }, true)
+    })
     shakeStrengthRef.current = 0
     sparkStrengthRef.current = 0
     sputterTimerRef.current = 0
@@ -148,6 +196,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     disabledEmittedRef.current = false
     nanGuardTripsRef.current = 0
     speedClampTripsRef.current = 0
+    outOfBoundsTimerRef.current = 0
     setTelemetry(0, 0)
     setPhysicsTelemetry({
       speedKph: 0,
@@ -165,7 +214,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     smoothedPosRef.current.set(startPosition.x, startPosition.y, startPosition.z)
     smoothedForwardRef.current.set(0, 0, 1)
     smoothedTargetRef.current.set(startPosition.x, startPosition.y + 1.3, startPosition.z + CAMERA_LOOK_AHEAD)
-  }, [restartToken, setPhysicsTelemetry, setTelemetry, startPosition, startYaw])
+  }, [restartToken, setPhysicsTelemetry, setTelemetry, startPosition, startYaw, wheelStartPositions])
 
   useEffect(() => {
     return bindKeyboardControls(inputRef, setKeyboardInput)
@@ -211,6 +260,10 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const pos = body.translation()
     const maxOutOfBounds = map.worldHalf * 1.08
     if (Math.abs(pos.x) > maxOutOfBounds || Math.abs(pos.z) > maxOutOfBounds) {
+      outOfBoundsTimerRef.current += delta
+      if (outOfBoundsTimerRef.current < 0.35) {
+        return
+      }
       resetBodyPoseAndTelemetry({
         body,
         startPosition,
@@ -233,6 +286,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       onPlayerPosition([startPosition.x, startPosition.y, startPosition.z])
       return
     }
+    outOfBoundsTimerRef.current = 0
     if (status === 'lost') {
       setTelemetry(0, 0)
       setPhysicsTelemetry({
@@ -329,6 +383,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   })
 
   return (
+    <>
     <RigidBody
       ref={bodyRef}
       name={PLAYER_BODY_NAME}
@@ -394,7 +449,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       }}
     >
       <group scale={vehiclePhysicsTuning.scale}>
-        <CuboidCollider args={[0.7, 0.33, 1.18]} position={[0, 0.06, 0]} />
+        <CuboidCollider args={[0.56, 0.28, 1.12]} position={[0, 0.12, 0]} />
         <CarModel
           bodyColor={palette.body}
           accentColor={palette.accent}
@@ -428,5 +483,74 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         </group>
       )}
     </RigidBody>
+    <RigidBody
+      ref={wheelFlRef}
+      colliders={false}
+      position={wheelStartPositions[0]}
+      mass={Math.max(0.04, vehiclePhysicsTuning.mass * 0.03)}
+      enabledRotations={[true, false, false]}
+      linearDamping={1.1}
+      angularDamping={4.2}
+      ccd
+      canSleep={false}
+    >
+      <CylinderCollider args={[0.14, 0.22]} rotation={[0, 0, Math.PI / 2]} friction={2.1} restitution={0.02} />
+      <mesh castShadow receiveShadow rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.22, 0.22, 0.28, 18]} />
+        <meshStandardMaterial color="#1d2127" roughness={0.85} metalness={0.05} />
+      </mesh>
+    </RigidBody>
+    <RigidBody
+      ref={wheelFrRef}
+      colliders={false}
+      position={wheelStartPositions[1]}
+      mass={Math.max(0.04, vehiclePhysicsTuning.mass * 0.03)}
+      enabledRotations={[true, false, false]}
+      linearDamping={1.1}
+      angularDamping={4.2}
+      ccd
+      canSleep={false}
+    >
+      <CylinderCollider args={[0.14, 0.22]} rotation={[0, 0, Math.PI / 2]} friction={2.1} restitution={0.02} />
+      <mesh castShadow receiveShadow rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.22, 0.22, 0.28, 18]} />
+        <meshStandardMaterial color="#1d2127" roughness={0.85} metalness={0.05} />
+      </mesh>
+    </RigidBody>
+    <RigidBody
+      ref={wheelRlRef}
+      colliders={false}
+      position={wheelStartPositions[2]}
+      mass={Math.max(0.04, vehiclePhysicsTuning.mass * 0.03)}
+      enabledRotations={[true, false, false]}
+      linearDamping={1.1}
+      angularDamping={4.2}
+      ccd
+      canSleep={false}
+    >
+      <CylinderCollider args={[0.14, 0.22]} rotation={[0, 0, Math.PI / 2]} friction={2.1} restitution={0.02} />
+      <mesh castShadow receiveShadow rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.22, 0.22, 0.28, 18]} />
+        <meshStandardMaterial color="#1d2127" roughness={0.85} metalness={0.05} />
+      </mesh>
+    </RigidBody>
+    <RigidBody
+      ref={wheelRrRef}
+      colliders={false}
+      position={wheelStartPositions[3]}
+      mass={Math.max(0.04, vehiclePhysicsTuning.mass * 0.03)}
+      enabledRotations={[true, false, false]}
+      linearDamping={1.1}
+      angularDamping={4.2}
+      ccd
+      canSleep={false}
+    >
+      <CylinderCollider args={[0.14, 0.22]} rotation={[0, 0, Math.PI / 2]} friction={2.1} restitution={0.02} />
+      <mesh castShadow receiveShadow rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.22, 0.22, 0.28, 18]} />
+        <meshStandardMaterial color="#1d2127" roughness={0.85} metalness={0.05} />
+      </mesh>
+    </RigidBody>
+    </>
   )
 }

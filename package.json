@@ -7,6 +7,8 @@
     "dev": "vite --port 5180",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "physics:bounce": "node scripts/smoke-bounce.mjs",
+    "physics:runtime": "npm exec -- tsx scripts/physics-runtime.ts",
     "maps:smoke": "tsx scripts/smoke-maps.ts",
     "preview": "vite preview",
     "verify:builds": "tsx scripts/verify-vehicle-builds.ts"

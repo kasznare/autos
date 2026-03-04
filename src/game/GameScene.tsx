@@ -1,5 +1,7 @@
 import { ContactShadows, Environment } from '@react-three/drei'
-import { useMemo } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { useMemo, useRef } from 'react'
+import { DirectionalLight, Group, Object3D } from 'three'
 import { createInitialDestructibles, getTrackMap } from './maps'
 import { PlayerCar } from './PlayerCar'
 import {
@@ -28,6 +30,70 @@ import { useGameSceneRuntime } from './scene/useGameSceneRuntime'
 import { useRenderProfiler } from './scene/useRenderProfiler'
 import type { QualityConfig, QualityTier } from './systems'
 import { useGameStore } from './store'
+
+const PlayerShadowRig = ({
+  playerPositionRef,
+  enabled,
+  enableContactShadows,
+  shadowMapSize,
+  shadowDistance = 58,
+}: {
+  playerPositionRef: { current: [number, number, number] }
+  enabled: boolean
+  enableContactShadows: boolean
+  shadowMapSize: [number, number]
+  shadowDistance?: number
+}) => {
+  const lightRef = useRef<DirectionalLight | null>(null)
+  const targetObject = useMemo(() => new Object3D(), [])
+  const contactGroupRef = useRef<Group | null>(null)
+
+  useFrame(() => {
+    if (!enabled) {
+      return
+    }
+    const [x, y, z] = playerPositionRef.current
+
+    const light = lightRef.current
+    if (light) {
+      light.position.set(x + 12, y + 24, z + 10)
+      light.target = targetObject
+      targetObject.position.set(x, y, z)
+      targetObject.updateMatrixWorld()
+      light.shadow.camera.updateProjectionMatrix()
+      light.shadow.needsUpdate = true
+    }
+
+    if (contactGroupRef.current) {
+      contactGroupRef.current.position.set(x, y + 0.03, z)
+    }
+  })
+
+  return (
+    <>
+      <primitive object={targetObject} />
+      <directionalLight
+        ref={lightRef}
+        position={[12, 24, 10]}
+        intensity={1.35}
+        castShadow={enabled}
+        shadow-mapSize={shadowMapSize}
+        shadow-bias={-0.00018}
+        shadow-camera-near={1}
+        shadow-camera-far={80}
+        shadow-camera-left={-shadowDistance * 0.62}
+        shadow-camera-right={shadowDistance * 0.62}
+        shadow-camera-top={shadowDistance * 0.62}
+        shadow-camera-bottom={-shadowDistance * 0.62}
+      />
+      {enableContactShadows ? (
+        <group ref={contactGroupRef} position={[0, 0.03, 0]}>
+          <ContactShadows opacity={0.35} scale={shadowDistance} blur={2.2} far={42} resolution={512} color="#2a4f3b" />
+        </group>
+      ) : null}
+    </>
+  )
+}
 
 export const GameScene = ({
   lowPowerMode = false,
@@ -122,21 +188,14 @@ export const GameScene = ({
     <>
       <ambientLight intensity={lowPowerMode ? 0.54 : 0.42} />
       {lowPowerMode ? <hemisphereLight intensity={0.28} color="#d8f2ff" groundColor="#6f916a" /> : null}
-      <directionalLight
-        position={[12, 24, 10]}
-        intensity={1.35}
-        castShadow={qualityConfig.shadows !== false}
-        shadow-mapSize={qualityConfig.directionalShadowMapSize}
-        shadow-bias={-0.00018}
-        shadow-camera-near={1}
-        shadow-camera-far={80}
-        shadow-camera-left={-36}
-        shadow-camera-right={36}
-        shadow-camera-top={36}
-        shadow-camera-bottom={-36}
+      <PlayerShadowRig
+        playerPositionRef={playerPositionRef}
+        enabled={qualityConfig.shadows !== false}
+        enableContactShadows={qualityConfig.enableContactShadows}
+        shadowMapSize={qualityConfig.directionalShadowMapSize}
+        shadowDistance={Math.max(58, map.roadWidth * 3.5)}
       />
       {qualityConfig.enableEnvironment ? <Environment preset="sunset" /> : null}
-      {qualityConfig.enableContactShadows ? <ContactShadows position={[0, 0.03, 0]} opacity={0.35} scale={58} blur={2.2} far={42} resolution={512} color="#2a4f3b" /> : null}
       {map.shape === 'ring' ? (
         <>
           <Ground worldHalf={map.worldHalf} />

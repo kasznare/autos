@@ -16,19 +16,21 @@ if ! git show-ref --verify --quiet "refs/heads/${BASE_REF}" && ! git rev-parse -
 fi
 
 declare -a BRANCHES=(
-  "codex/team-01-rendering-modes-v2"
-  "codex/team-02-physics-collision-jump-v2"
-  "codex/team-03-map-geometry-interactables-v2"
-  "codex/team-04-performance-v2"
-  "codex/integration-v2"
+  "codex/team-01-vehicle-rig-v3"
+  "codex/team-02-vehicle-dynamics-v3"
+  "codex/team-03-vehicle-powertrain-v3"
+  "codex/team-04-vehicle-definitions-v3"
+  "codex/team-05-vehicle-integration-v3"
+  "codex/integration-vehicle-v3"
 )
 
 declare -a DIRS=(
-  "${PARENT_DIR}/autos-team-01-v2"
-  "${PARENT_DIR}/autos-team-02-v2"
-  "${PARENT_DIR}/autos-team-03-v2"
-  "${PARENT_DIR}/autos-team-04-v2"
-  "${PARENT_DIR}/autos-integration-v2"
+  "${PARENT_DIR}/autos-team-01-v3"
+  "${PARENT_DIR}/autos-team-02-v3"
+  "${PARENT_DIR}/autos-team-03-v3"
+  "${PARENT_DIR}/autos-team-04-v3"
+  "${PARENT_DIR}/autos-team-05-v3"
+  "${PARENT_DIR}/autos-integration-v3"
 )
 
 for i in "${!BRANCHES[@]}"; do

@@ -7,16 +7,25 @@ type SetGamepadConnected = (connected: boolean) => void
 
 export const bindKeyboardControls = (inputRef: { current: DriveInputState }, setKeyboardInput: SetKeyboardInput) => {
   const onDown = (event: KeyboardEvent) => {
+    const mapped = keyCodeToInput(event.code)
+    if (mapped) {
+      // Game controls should not trigger focused button activation or page scrolling.
+      event.preventDefault()
+      event.stopPropagation()
+    }
     void unlockAudio()
     applyKey(inputRef.current, event.code, true)
-    const mapped = keyCodeToInput(event.code)
     if (mapped) {
       setKeyboardInput(mapped, true)
     }
   }
   const onUp = (event: KeyboardEvent) => {
-    applyKey(inputRef.current, event.code, false)
     const mapped = keyCodeToInput(event.code)
+    if (mapped) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    applyKey(inputRef.current, event.code, false)
     if (mapped) {
       setKeyboardInput(mapped, false)
     }

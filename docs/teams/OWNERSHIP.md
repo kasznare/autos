@@ -1,51 +1,65 @@
-# Team Ownership and Integration Rules (v2)
+# Team Ownership and Integration Rules (v3 Vehicle Rewrite)
 
-Purpose: prevent merge conflicts and central-file churn by keeping each team in bounded modules.
+Purpose: ship a detailed non-raycast vehicle model with minimal merge conflicts.
 
 ## Branches
-- Team 01: `codex/team-01-rendering-modes-v2`
-- Team 02: `codex/team-02-physics-collision-jump-v2`
-- Team 03: `codex/team-03-map-geometry-interactables-v2`
-- Team 04: `codex/team-04-performance-v2`
-- Integration: `codex/integration-v2`
+- Team 01 (Rig): `codex/team-01-vehicle-rig-v3`
+- Team 02 (Tires/Suspension): `codex/team-02-vehicle-dynamics-v3`
+- Team 03 (Powertrain/Drivetrain): `codex/team-03-vehicle-powertrain-v3`
+- Team 04 (Definitions/Classes): `codex/team-04-vehicle-definitions-v3`
+- Team 05 (Integration/Tests): `codex/team-05-vehicle-integration-v3`
+- Integration: `codex/integration-vehicle-v3`
 
 ## Central Files (Integration-Owned)
-These files are integration-owned and should not be edited directly by team branches unless there is explicit integration approval:
+Do not edit directly from team branches unless explicitly approved by integration:
 - `src/App.tsx`
 - `src/game/GameScene.tsx`
 - `src/game/PlayerCar.tsx`
 - `src/game/Hud.tsx`
 - `src/game/store.ts`
+- `src/game/store/*` (except additive type-safe extensions requested by Team 05)
 
 ## Team Module Ownership
-- Team 01 (Rendering):
-  - `src/game/scene/terrain.tsx`
-  - rendering-specific modules under `src/game/scene/` and new rendering folders
-  - rendering-related CSS variables and visual-mode settings
-- Team 02 (Physics/Collision/Jump):
-  - `src/game/systems/player-car/*`
-  - `src/game/physics/*`
-  - input plumbing modules (not central HUD/App orchestration)
-- Team 03 (Maps/Geometry/Objects):
-  - `src/game/maps/*`
-  - world object/entity map modules
-  - map schema, validation, and placement logic
-- Team 04 (Performance):
-  - optimization utilities and instrumentation modules
-  - docs in `documentation/`
-  - non-invasive performance improvements in owned modules
+- Team 01 (Rig)
+- `src/game/vehicle/rig/*`
+- `src/game/vehicle/common/*` (rig-related shared types only)
 
-## Cross-Team Interface Rule
-- Prefer adding/extending interfaces in modular files (`types`, slice contracts, adapters).
-- If a cross-team change requires central file edits, open a small integration PR or hand off to integration branch.
+- Team 02 (Tires/Suspension)
+- `src/game/vehicle/dynamics/*`
+- `src/game/vehicle/tire/*`
+- `src/game/vehicle/suspension/*`
+
+- Team 03 (Powertrain/Drivetrain)
+- `src/game/vehicle/powertrain/*`
+- `src/game/vehicle/drivetrain/*`
+
+- Team 04 (Definitions/Classes)
+- `src/game/vehicle/definitions/*`
+- `src/game/vehicle/schema/*`
+
+- Team 05 (Integration/Tests)
+- `src/game/vehicle/integration/*`
+- `scripts/physics-*.ts`
+- `scripts/physics-*.mjs`
+- adapter/wiring changes needed to toggle v1/v2 vehicle model behind feature flags
+
+## Cross-Team Interface Rules
+- Prefer additive interfaces and explicit contracts in `src/game/vehicle/common/contracts.ts`.
+- Do not import across team modules through deep private paths; import via public index files.
+- If you need another team's in-progress interface, define a temporary local adapter and mark TODO with branch reference.
 
 ## Merge Policy
-1. Team branches merge into `codex/integration-v2`.
-2. Integration resolves conflicts and performs system-level validation.
+1. Team branches merge into `codex/integration-vehicle-v3` only.
+2. Integration resolves conflicts and runs full validation.
 3. Only integration merges to `main`.
 
 ## Required Validation
 - `npm run lint`
 - `npm run build`
-- Include changed file list in PR description.
-- Explicitly call out any central-file edits and why they were needed.
+- `npm run physics:bounce`
+- `npm run physics:runtime`
+
+## PR Requirements
+- Include changed file list.
+- Call out any central-file edits and why they were unavoidable.
+- Include before/after behavior notes for stability-sensitive changes.
