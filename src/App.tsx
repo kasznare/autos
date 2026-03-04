@@ -1,4 +1,4 @@
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { useEffect, useMemo, useState } from 'react'
 import { GameScene } from './game/GameScene'
@@ -10,26 +10,6 @@ import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
 import { GarageOverlay } from './game/ui/builder/GarageOverlay'
 
-const FrameLimiter = ({ active, fps = 60 }: { active: boolean; fps?: number }) => {
-  const invalidate = useThree((state) => state.invalidate)
-
-  useEffect(() => {
-    if (!active) {
-      return
-    }
-    const intervalMs = 1000 / fps
-    invalidate()
-    const timer = window.setInterval(() => {
-      invalidate()
-    }, intervalMs)
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [active, fps, invalidate])
-
-  return null
-}
-
 export const App = () => {
   const batterySaverMode = useGameStore((state) => state.batterySaverMode)
   const [manualPaused, setManualPaused] = useState(false)
@@ -39,9 +19,9 @@ export const App = () => {
   const [isRoomHost, setIsRoomHost] = useState(false)
   const selectedMapId = useGameStore((state) => state.selectedMapId)
   const proceduralMapSeed = useGameStore((state) => state.proceduralMapSeed)
-  const frameMsAvg = useGameStore((state) => state.renderPerf.frameMsAvg)
   const setQualityTier = useGameStore((state) => state.setQualityTier)
 
+  const ADAPTIVE_QUALITY_ENABLED = false
   const touchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
       return false
@@ -49,7 +29,11 @@ export const App = () => {
     return window.matchMedia('(pointer: coarse)').matches
   }, [])
   const lowPowerMode = batterySaverMode === 'on' || (batterySaverMode === 'auto' && touchDevice)
-  const qualityTier = deriveQualityTier({ batterySaverMode, touchDevice, frameMsAvg })
+  const qualityTier = deriveQualityTier({
+    batterySaverMode,
+    touchDevice,
+    frameMsAvg: ADAPTIVE_QUALITY_ENABLED ? useGameStore.getState().renderPerf.frameMsAvg : 0,
+  })
   const qualityConfig = getQualityConfig(qualityTier)
   const paused = manualPaused || tabInactive || garageOpen
   const mapGravity = useMemo(
@@ -111,13 +95,12 @@ export const App = () => {
   return (
     <div className="app-shell">
       <Canvas
-        frameloop={paused ? 'never' : 'demand'}
+        frameloop={paused ? 'never' : 'always'}
         shadows={qualityConfig.shadows}
         dpr={qualityConfig.dpr}
         gl={{ antialias: qualityConfig.antialias, powerPreference: qualityConfig.powerPreference, stencil: false }}
         camera={{ fov: 55, position: [0, 8, 16] }}
       >
-        <FrameLimiter active={!paused} fps={touchDevice ? 30 : 60} />
         <color attach="background" args={['#8cd3f0']} />
         <fog attach="fog" args={['#8cd3f0', 25, 80]} />
         <Physics gravity={mapGravity}>

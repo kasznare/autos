@@ -1,4 +1,4 @@
-import { ContactShadows, Environment } from '@react-three/drei'
+import { ContactShadows, Environment, Lightformer } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
 import { DirectionalLight, Group, Object3D } from 'three'
@@ -95,6 +95,29 @@ const PlayerShadowRig = ({
   )
 }
 
+const GlobalIlluminationRig = ({
+  enabled,
+  lowPowerMode,
+}: {
+  enabled: boolean
+  lowPowerMode: boolean
+}) => {
+  if (!enabled) {
+    return null
+  }
+
+  return (
+    <>
+      {/* Soft sky/ground energy as a cheap GI baseline. */}
+      <hemisphereLight intensity={lowPowerMode ? 0.2 : 0.34} color="#dff4ff" groundColor="#5f8f6a" />
+      {/* Warm side bounce to avoid harsh single-direction contrast. */}
+      <directionalLight position={[-14, 18, -9]} intensity={lowPowerMode ? 0.1 : 0.24} color="#ffd8a6" castShadow={false} />
+      {/* Cool rim fill for shape readability. */}
+      <directionalLight position={[10, 8, 14]} intensity={lowPowerMode ? 0.06 : 0.14} color="#c6e7ff" castShadow={false} />
+    </>
+  )
+}
+
 export const GameScene = ({
   lowPowerMode = false,
   qualityTier = 'high',
@@ -186,8 +209,8 @@ export const GameScene = ({
 
   return (
     <>
-      <ambientLight intensity={lowPowerMode ? 0.54 : 0.42} />
-      {lowPowerMode ? <hemisphereLight intensity={0.28} color="#d8f2ff" groundColor="#6f916a" /> : null}
+      <ambientLight intensity={lowPowerMode ? 0.44 : 0.3} />
+      <GlobalIlluminationRig enabled={!lowPowerMode || qualityConfig.enableEnvironment} lowPowerMode={lowPowerMode} />
       <PlayerShadowRig
         playerPositionRef={playerPositionRef}
         enabled={qualityConfig.shadows !== false}
@@ -195,7 +218,14 @@ export const GameScene = ({
         shadowMapSize={qualityConfig.directionalShadowMapSize}
         shadowDistance={Math.max(58, map.roadWidth * 3.5)}
       />
-      {qualityConfig.enableEnvironment ? <Environment preset="sunset" /> : null}
+      {qualityConfig.enableEnvironment ? (
+        <Environment preset="sunset">
+          {/* Add directional light cards to fake indirect global bounce. */}
+          <Lightformer intensity={0.85} rotation-x={Math.PI / 2} position={[0, 14, -8]} scale={[22, 22, 1]} color="#ffe3bb" />
+          <Lightformer intensity={0.52} rotation-y={Math.PI / 2} position={[-12, 7, 0]} scale={[14, 14, 1]} color="#c9e8ff" />
+          <Lightformer intensity={0.42} rotation-y={-Math.PI / 2} position={[12, 5, 0]} scale={[12, 12, 1]} color="#bde0c2" />
+        </Environment>
+      ) : null}
       {map.shape === 'ring' ? (
         <>
           <Ground worldHalf={map.worldHalf} />

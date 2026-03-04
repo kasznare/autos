@@ -9,8 +9,12 @@ import { useRenderSettings } from '../render/useRenderSettings'
 const tempDistanceVec = new Vector3()
 const TERRAIN_LOD_HYSTERESIS = 8
 const ROAD_LOD_HYSTERESIS = 8
+const DISABLE_TEXTURE_SWITCHING = true
 
 const resolveNearLod = (distance: number, threshold: number, hysteresis: number, previous: boolean | null) => {
+  if (DISABLE_TEXTURE_SWITCHING) {
+    return true
+  }
   if (previous === null) {
     return distance < threshold
   }
@@ -106,7 +110,7 @@ export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) =
       <mesh receiveShadow={render.mode === 'pretty'} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[worldHalf * 2, worldHalf * 2]} />
         {render.mode === 'flat-debug' ? (
-          <meshStandardMaterial color="#62b873" roughness={1} metalness={0} wireframe={render.wireframe} />
+          <meshStandardMaterial color="#62b873" roughness={1} metalness={0} wireframe flatShading />
         ) : (
           <meshStandardMaterial ref={materialRef} color="#4cb35f" roughness={0.88} metalness={0.04} />
         )}
@@ -210,7 +214,7 @@ export const RoadLoop = ({ outerHalf, innerHalf }: { outerHalf: number; innerHal
     <mesh receiveShadow={render.mode === 'pretty'} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[TRACK_SIZE, TRACK_SIZE]} />
       {render.mode === 'flat-debug' ? (
-        <meshStandardMaterial color="#60656d" roughness={0.95} metalness={0} wireframe={render.wireframe} />
+        <meshStandardMaterial color="#60656d" roughness={0.95} metalness={0} wireframe flatShading />
       ) : (
         <meshStandardMaterial ref={materialRef} transparent roughness={0.85} metalness={0.16} />
       )}
@@ -338,7 +342,7 @@ export const RoadPath = ({ map, terrainSegments }: { map: TrackMap; terrainSegme
   return (
     <mesh receiveShadow={render.mode === 'pretty'} geometry={roadGeometry}>
       {render.mode === 'flat-debug' ? (
-        <meshStandardMaterial color="#5f656d" roughness={1} metalness={0} wireframe={render.wireframe} />
+        <meshStandardMaterial color="#5f656d" roughness={1} metalness={0} wireframe flatShading />
       ) : (
         <meshStandardMaterial ref={materialRef} transparent roughness={0.84} metalness={0.2} />
       )}
@@ -551,7 +555,7 @@ export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terr
     <RigidBody type="fixed" colliders={false} name="terrain-ground-procedural">
       <mesh receiveShadow={render.mode === 'pretty'} geometry={terrainGeometry}>
         {render.mode === 'flat-debug' ? (
-          <meshStandardMaterial color="#5aa267" roughness={1} metalness={0} wireframe={render.wireframe} />
+          <meshStandardMaterial color="#5aa267" roughness={1} metalness={0} wireframe flatShading />
         ) : (
           <meshStandardMaterial ref={materialRef} roughness={0.88} metalness={0.06} />
         )}

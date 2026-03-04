@@ -120,6 +120,16 @@ export const Hud = ({
             Hit: {physicsTelemetry.latestImpactTier} ({physicsTelemetry.latestImpactImpulse.toFixed(1)})
           </div>
         </div>
+        <div className="hud-telemetry-row">
+          <div className="hud-card hud-card-compact">Drive: {physicsTelemetry.driveMode}</div>
+        </div>
+        <div className="hud-wheel-debug">
+          {physicsTelemetry.wheelDebugRows.map((row, idx) => (
+            <div key={`${idx}-${row}`} className="hud-wheel-debug-row">
+              {row}
+            </div>
+          ))}
+        </div>
         <div className="mission-card">
           <div className="mission-title">
             Mission: {mission.label}

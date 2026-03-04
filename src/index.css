@@ -31,6 +31,10 @@ body {
   position: relative;
 }
 
+.app-shell canvas {
+  touch-action: none;
+}
+
 .garage-overlay {
   position: absolute;
   inset: 0;
@@ -197,6 +201,24 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.45rem;
+}
+
+.hud-wheel-debug {
+  margin-top: 0.35rem;
+  background: rgba(9, 23, 34, 0.74);
+  border: 1px solid rgba(190, 227, 255, 0.38);
+  border-radius: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  color: #d7eeff;
+  font-size: 0.64rem;
+  line-height: 1.3;
+}
+
+.hud-wheel-debug-row {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hud-feedback-row {

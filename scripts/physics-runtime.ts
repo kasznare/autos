@@ -98,6 +98,7 @@ const run = async () => {
   const lastGroundedAtRef = { current: 0 }
   const nanGuardTripsRef = { current: 0 }
   const speedClampTripsRef = { current: 0 }
+  const telemetryTimerRef = { current: 0 }
 
   let peakY = Number.NEGATIVE_INFINITY
   let minYAfterSettle = Number.POSITIVE_INFINITY
@@ -139,6 +140,7 @@ const run = async () => {
       lastGroundedAtRef,
       nanGuardTripsRef,
       speedClampTripsRef,
+      telemetryTimerRef,
       setTelemetry: () => {},
       setPhysicsTelemetry: () => {},
       onPlayerPosition: () => {},

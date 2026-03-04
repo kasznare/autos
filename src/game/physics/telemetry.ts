@@ -13,4 +13,6 @@ export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 
   hardContactCount: 0,
   nanGuardTrips: 0,
   speedClampTrips: 0,
+  driveMode: 'native',
+  wheelDebugRows: ['-', '-', '-', '-'],
 })

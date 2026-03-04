@@ -120,6 +120,8 @@ export type PhysicsDebugTelemetryV2 = {
   hardContactCount: number
   nanGuardTrips: number
   speedClampTrips: number
+  driveMode: 'native' | '2wd-rwd'
+  wheelDebugRows: readonly [string, string, string, string]
 }
 
 export type WorldObstacle = {

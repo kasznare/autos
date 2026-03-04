@@ -1,4 +1,4 @@
-import { Trail } from '@react-three/drei'
+import { Line, Trail } from '@react-three/drei'
 import type { RefObject } from 'react'
 import { BackSide } from 'three'
 import type { Group } from 'three'
@@ -19,6 +19,10 @@ type CarModelProps = {
   roofRef?: RefObject<Group | null>
   leftDoorRef?: RefObject<Group | null>
   rightDoorRef?: RefObject<Group | null>
+  frontLeftSteerRad?: number
+  frontRightSteerRad?: number
+  wheelSpinRad?: number
+  physicsDebugView?: boolean
 }
 
 export const CarModel = ({
@@ -36,6 +40,10 @@ export const CarModel = ({
   roofRef,
   leftDoorRef,
   rightDoorRef,
+  frontLeftSteerRad = 0,
+  frontRightSteerRad = 0,
+  wheelSpinRad = 0,
+  physicsDebugView = false,
 }: CarModelProps) => {
   const mirrorFellOff = damage >= 58
   const spoilerFellOff = damage >= 72
@@ -43,6 +51,88 @@ export const CarModel = ({
   const frontBumperFellOff = damage >= 92
   const glassCrackOpacity = crackOpacity ?? Math.min(0.72, Math.max(0, (damage - 38) / 62) * 0.72)
   const flatDebug = renderMode === 'flat-debug'
+  const safeFrontLeftSteer = Number.isFinite(frontLeftSteerRad) ? frontLeftSteerRad : 0
+  const safeFrontRightSteer = Number.isFinite(frontRightSteerRad) ? frontRightSteerRad : 0
+  const safeWheelSpin = Number.isFinite(wheelSpinRad) ? wheelSpinRad : 0
+
+  if (physicsDebugView) {
+    const fl: [number, number, number] = [-0.6, -0.08, 0.8]
+    const fr: [number, number, number] = [0.6, -0.08, 0.8]
+    const rl: [number, number, number] = [-0.6, -0.08, -0.8]
+    const rr: [number, number, number] = [0.6, -0.08, -0.8]
+    const afl: [number, number, number] = [-0.42, 0.32, 0.8]
+    const afr: [number, number, number] = [0.42, 0.32, 0.8]
+    const arl: [number, number, number] = [-0.42, 0.32, -0.8]
+    const arr: [number, number, number] = [0.42, 0.32, -0.8]
+    return (
+      <group>
+        <group position={fl} rotation={[0, safeFrontLeftSteer, 0]}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#2a2f3a" emissive="#6ac3ff" emissiveIntensity={0.12} roughness={0.9} metalness={0} />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[0.055, 8, 8]} />
+            <meshBasicMaterial color="#8be3ff" />
+          </mesh>
+        </group>
+        <group position={fr} rotation={[0, safeFrontRightSteer, 0]}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#2a2f3a" emissive="#6ac3ff" emissiveIntensity={0.12} roughness={0.9} metalness={0} />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[0.055, 8, 8]} />
+            <meshBasicMaterial color="#8be3ff" />
+          </mesh>
+        </group>
+        <group position={rl}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#2a2f3a" emissive="#6ac3ff" emissiveIntensity={0.12} roughness={0.9} metalness={0} />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[0.055, 8, 8]} />
+            <meshBasicMaterial color="#8be3ff" />
+          </mesh>
+        </group>
+        <group position={rr}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#2a2f3a" emissive="#6ac3ff" emissiveIntensity={0.12} roughness={0.9} metalness={0} />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[0.055, 8, 8]} />
+            <meshBasicMaterial color="#8be3ff" />
+          </mesh>
+        </group>
+        <Line points={[afl, arl]} color="#7fd8ff" lineWidth={2} />
+        <Line points={[afr, arr]} color="#7fd8ff" lineWidth={2} />
+        <Line points={[afl, afr]} color="#ffca73" lineWidth={2} />
+        <Line points={[arl, arr]} color="#ffca73" lineWidth={2} />
+        <Line points={[afl, fl]} color="#b6f7c2" lineWidth={1.5} />
+        <Line points={[afr, fr]} color="#b6f7c2" lineWidth={1.5} />
+        <Line points={[arl, rl]} color="#b6f7c2" lineWidth={1.5} />
+        <Line points={[arr, rr]} color="#b6f7c2" lineWidth={1.5} />
+        <mesh position={fl} renderOrder={2000}>
+          <sphereGeometry args={[0.13, 12, 12]} />
+          <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
+        </mesh>
+        <mesh position={fr} renderOrder={2000}>
+          <sphereGeometry args={[0.13, 12, 12]} />
+          <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
+        </mesh>
+        <mesh position={rl} renderOrder={2000}>
+          <sphereGeometry args={[0.13, 12, 12]} />
+          <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
+        </mesh>
+        <mesh position={rr} renderOrder={2000}>
+          <sphereGeometry args={[0.13, 12, 12]} />
+          <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
+        </mesh>
+      </group>
+    )
+  }
 
   if (flatDebug) {
     return (
@@ -101,12 +191,26 @@ export const CarModel = ({
             <meshStandardMaterial color="#323840" roughness={1} metalness={0} wireframe={wireframe} />
           </mesh>
         </group>
-        {[[-0.6, -0.08, -0.8], [0.6, -0.08, -0.8], [-0.6, -0.08, 0.8], [0.6, -0.08, 0.8]].map(([x, y, z]) => (
-          <mesh key={`${x}-${z}`} castShadow={!lowPowerMode} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
+        <group position={[-0.6, -0.08, 0.8]} rotation={[0, safeFrontLeftSteer, 0]}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
             <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
             <meshStandardMaterial color="#20242d" roughness={0.95} metalness={0} wireframe={wireframe} />
           </mesh>
-        ))}
+        </group>
+        <group position={[0.6, -0.08, 0.8]} rotation={[0, safeFrontRightSteer, 0]}>
+          <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+            <meshStandardMaterial color="#20242d" roughness={0.95} metalness={0} wireframe={wireframe} />
+          </mesh>
+        </group>
+        <mesh castShadow={!lowPowerMode} position={[-0.6, -0.08, -0.8]} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+          <meshStandardMaterial color="#20242d" roughness={0.95} metalness={0} wireframe={wireframe} />
+        </mesh>
+        <mesh castShadow={!lowPowerMode} position={[0.6, -0.08, -0.8]} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+          <meshStandardMaterial color="#20242d" roughness={0.95} metalness={0} wireframe={wireframe} />
+        </mesh>
         <mesh position={[0, 0.92, 0.45]}>
           <planeGeometry args={[0.72, 0.18]} />
           <meshStandardMaterial color="#304151" transparent opacity={Math.min(0.65, 0.25 + glassCrackOpacity)} />
@@ -180,46 +284,64 @@ export const CarModel = ({
       ) : (
         shell
       )}
-      <mesh castShadow position={[0, 0.75, -0.1]}>
-        <boxGeometry args={[1.1, 0.45, 1.1]} />
-        <meshStandardMaterial color={accentColor} roughness={0.5} />
-      </mesh>
-      <mesh castShadow position={[0, 0.95, 0.35]}>
-        <boxGeometry args={[0.8, 0.2, 0.6]} />
-        <meshStandardMaterial color="#a7d2ff" emissive="#2a71bf" emissiveIntensity={0.3} />
-      </mesh>
-      <mesh position={[0, 0.96, 0.46]}>
-        <planeGeometry args={[0.7, 0.16]} />
-        <meshStandardMaterial color="#1f2026" transparent opacity={glassCrackOpacity} />
-      </mesh>
-      {frontBumperFellOff ? null : (
-        <group ref={bumperRef} position={[0, 0.03, 1.2]}>
-          <mesh castShadow>
-            <boxGeometry args={[1.35, 0.22, 0.24]} />
-            <meshStandardMaterial color={damage >= 60 ? '#3f434f' : accentColor} metalness={0.25} roughness={0.6} />
+      {lowPowerMode ? (
+        <>
+          <mesh castShadow position={[0, 0.75, -0.1]}>
+            <boxGeometry args={[1.1, 0.45, 1.1]} />
+            <meshStandardMaterial color={accentColor} roughness={0.5} />
           </mesh>
-        </group>
-      )}
-      <group ref={loosePanelRef} position={[0.82, 0.26, 0.18]} visible={false}>
-        <mesh castShadow>
-          <boxGeometry args={[0.12, 0.46, 0.72]} />
-          <meshStandardMaterial color="#48515f" metalness={0.25} roughness={0.75} />
-        </mesh>
-      </group>
-      {spoilerFellOff ? null : (
-        <group position={[0, 0.98, -1.08]}>
-          <mesh castShadow>
-            <boxGeometry args={[0.92, 0.08, 0.18]} />
-            <meshStandardMaterial color={accentColor} metalness={0.2} roughness={0.58} />
+          <mesh castShadow position={[0, 0.95, 0.35]}>
+            <boxGeometry args={[0.8, 0.2, 0.6]} />
+            <meshStandardMaterial color="#a7d2ff" emissive="#2a71bf" emissiveIntensity={0.3} />
           </mesh>
-        </group>
-      )}
-      {[[-0.6, -0.08, -0.8], [0.6, -0.08, -0.8], [-0.6, -0.08, 0.8], [0.6, -0.08, 0.8]].map(([x, y, z]) => (
-        <mesh key={`${x}-${z}`} castShadow position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
-          <meshStandardMaterial color="#212329" />
-        </mesh>
-      ))}
+          <mesh position={[0, 0.96, 0.46]}>
+            <planeGeometry args={[0.7, 0.16]} />
+            <meshStandardMaterial color="#1f2026" transparent opacity={glassCrackOpacity} />
+          </mesh>
+          {frontBumperFellOff ? null : (
+            <group ref={bumperRef} position={[0, 0.03, 1.2]}>
+              <mesh castShadow>
+                <boxGeometry args={[1.35, 0.22, 0.24]} />
+                <meshStandardMaterial color={damage >= 60 ? '#3f434f' : accentColor} metalness={0.25} roughness={0.6} />
+              </mesh>
+            </group>
+          )}
+          <group ref={loosePanelRef} position={[0.82, 0.26, 0.18]} visible={false}>
+            <mesh castShadow>
+              <boxGeometry args={[0.12, 0.46, 0.72]} />
+              <meshStandardMaterial color="#48515f" metalness={0.25} roughness={0.75} />
+            </mesh>
+          </group>
+          {spoilerFellOff ? null : (
+            <group position={[0, 0.98, -1.08]}>
+              <mesh castShadow>
+                <boxGeometry args={[0.92, 0.08, 0.18]} />
+                <meshStandardMaterial color={accentColor} metalness={0.2} roughness={0.58} />
+              </mesh>
+            </group>
+          )}
+          <group position={[-0.6, -0.08, 0.8]} rotation={[0, safeFrontLeftSteer, 0]}>
+            <mesh castShadow rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
+              <meshStandardMaterial color="#212329" />
+            </mesh>
+          </group>
+          <group position={[0.6, -0.08, 0.8]} rotation={[0, safeFrontRightSteer, 0]}>
+            <mesh castShadow rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
+              <meshStandardMaterial color="#212329" />
+            </mesh>
+          </group>
+          <mesh castShadow position={[-0.6, -0.08, -0.8]} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
+            <meshStandardMaterial color="#212329" />
+          </mesh>
+          <mesh castShadow position={[0.6, -0.08, -0.8]} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.27, 0.27, 0.3, 20]} />
+            <meshStandardMaterial color="#212329" />
+          </mesh>
+        </>
+      ) : null}
     </group>
   )
 }
