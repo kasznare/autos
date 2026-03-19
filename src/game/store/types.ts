@@ -91,6 +91,7 @@ export type UiSlice = {
   setVehiclePhysicsMode: (mode: VehiclePhysicsMode) => void
   resetUiSetup: () => void
   triggerHitFx: (strength: number, label?: string) => void
+  clearHitFxLabel: () => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void
   setPhysicsTelemetry: (next: Partial<PhysicsDebugTelemetryV2>) => void
   setRenderPerfTelemetry: (next: RenderPerfTelemetry) => void

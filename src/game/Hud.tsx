@@ -90,6 +90,7 @@ export const Hud = ({
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
   const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
+  const clearHitFxLabel = useGameStore((state) => state.clearHitFxLabel)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceSamples, setTraceSamples] = useState<TraceSample[]>([])
 
@@ -99,6 +100,15 @@ export const Hud = ({
       resetVirtualInput()
     }
   }, [])
+  useEffect(() => {
+    if (!lastHitLabel) {
+      return
+    }
+    const timeout = window.setTimeout(() => {
+      clearHitFxLabel()
+    }, 1600)
+    return () => window.clearTimeout(timeout)
+  }, [clearHitFxLabel, hitFxToken, lastHitLabel])
   useEffect(() => {
     const next: TraceSample = {
       contact: physicsTelemetry.rampContact,

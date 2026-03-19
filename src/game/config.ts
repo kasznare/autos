@@ -77,6 +77,8 @@ export const VEHICLE_PHYSICS = {
   suspensionSpring: 24,
   suspensionDamping: 9.5,
   suspensionImpulseClamp: 16,
+  antiRollStiffness: 24,
+  antiRollDamping: 4.4,
   slopeAlignTorque: 2.3,
   slopeAlignDamping: 0.78,
   groundingSpeedThreshold: 2.4,

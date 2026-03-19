@@ -147,6 +147,12 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
       hitFxStrength: Math.max(0.15, Math.min(1, strength)),
       lastHitLabel: label,
     })),
+  clearHitFxLabel: () =>
+    set((state) => ({
+      ...state,
+      hitFxStrength: 0,
+      lastHitLabel: '',
+    })),
   setTelemetry: (speedKph, steeringDeg) =>
     set((state) => ({
       ...state,

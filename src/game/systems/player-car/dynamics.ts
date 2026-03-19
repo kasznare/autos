@@ -829,15 +829,16 @@ export const runVehicleDynamicsStep = ({
   }
 
   const turnDirection = driveCommand?.steer ?? Number(input.left) - Number(input.right)
-  const speedSteerScale = 1 - Math.min(0.62, Math.abs(nextForwardSpeed) / 16)
+  const steerSpeedFactor = Math.max(0.22, 1 - Math.abs(nextForwardSpeed) / 12)
+  const steerAuthority = 0.38 + steerSpeedFactor * 0.62
   const targetSteerAngle =
     turnDirection *
     VEHICLE_PHYSICS.maxSteerRad *
-    (0.78 + speedSteerScale * 0.46) *
+    steerAuthority *
     steeringScale *
     vehiclePhysicsTuning.steeringMult *
     (frontContactRatio > 0.05 ? Math.max(0.38, frontContactRatio) : 0)
-  const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
+  const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse * (0.78 + steerSpeedFactor * 0.22))
   steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
   yawRateRef.current = angVel.y
   const nextYaw = yaw + yawRateRef.current * delta
@@ -912,12 +913,32 @@ export const runVehicleDynamicsStep = ({
     const frontSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'front').length)
     const rearSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'rear').length)
     const supportMassShare = driveMass / Math.max(1, supportContacts.length)
+    const antiRollImpulses = new Array(supportContacts.length).fill(0)
+    const maxAntiRollImpulse = maxSupportImpulse * 0.65
+
+    for (const axle of ['front', 'rear'] as const) {
+      const leftIndex = supportContacts.findIndex((contact) => contact.axle === axle && contact.side === 'left')
+      const rightIndex = supportContacts.findIndex((contact) => contact.axle === axle && contact.side === 'right')
+      if (leftIndex < 0 || rightIndex < 0) {
+        continue
+      }
+      const leftContact = supportContacts[leftIndex]
+      const rightContact = supportContacts[rightIndex]
+      const compressionDelta = leftContact.compression - rightContact.compression
+      const velocityDelta = leftContact.pointVelAlongNormal - rightContact.pointVelAlongNormal
+      const antiRollForce =
+        compressionDelta * VEHICLE_PHYSICS.antiRollStiffness - velocityDelta * VEHICLE_PHYSICS.antiRollDamping
+      const antiRollImpulse = Math.max(-maxAntiRollImpulse, Math.min(maxAntiRollImpulse, antiRollForce * delta))
+      antiRollImpulses[leftIndex] += antiRollImpulse
+      antiRollImpulses[rightIndex] -= antiRollImpulse
+    }
     let totalDriveForce = 0
     let totalLateralForce = 0
     let totalTractionForce = 0
     let totalSpring = 0
 
-    for (const contact of supportContacts) {
+    for (let i = 0; i < supportContacts.length; i += 1) {
+      const contact = supportContacts[i]
       const springForce = Math.max(
         0,
         contact.compression * VEHICLE_PHYSICS.suspensionSpring -
@@ -930,6 +951,18 @@ export const runVehicleDynamicsStep = ({
             x: contact.normal.x * supportImpulseMag,
             y: contact.normal.y * supportImpulseMag,
             z: contact.normal.z * supportImpulseMag,
+          },
+          contact.anchorWorld,
+          true,
+        )
+      }
+      const antiRollImpulse = antiRollImpulses[i]
+      if (Math.abs(antiRollImpulse) > 1e-5) {
+        body.applyImpulseAtPoint(
+          {
+            x: contact.normal.x * antiRollImpulse,
+            y: contact.normal.y * antiRollImpulse,
+            z: contact.normal.z * antiRollImpulse,
           },
           contact.anchorWorld,
           true,
@@ -982,7 +1015,8 @@ export const runVehicleDynamicsStep = ({
         delta * (6.8 + Math.abs(pointForwardSpeed) * 0.75) * surfaceConfig.gripFactor * gripScale * vehiclePhysicsTuning.gripMult,
       )
       let lateralImpulse = -pointLateralSpeed * supportMassShare * lateralResponse
-      const tractionLimit = supportImpulseMag * (6.6 + surfaceConfig.gripFactor * 2.4) * gripScale * vehiclePhysicsTuning.gripMult
+      const loadedSupportImpulse = Math.max(0, supportImpulseMag + antiRollImpulse)
+      const tractionLimit = loadedSupportImpulse * (6.6 + surfaceConfig.gripFactor * 2.4) * gripScale * vehiclePhysicsTuning.gripMult
       const tangentialImpulseMag = Math.hypot(longitudinalImpulse, lateralImpulse)
       if (tangentialImpulseMag > tractionLimit && tractionLimit > 1e-5) {
         const tangentialScale = tractionLimit / tangentialImpulseMag
