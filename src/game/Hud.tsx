@@ -4,9 +4,12 @@ import { resetVirtualInput, setVirtualInput } from './keys'
 import { MAP_LABELS, MAP_ORDER } from './maps'
 import { unlockAudio } from './sfx'
 import { useGameStore } from './store'
+import type { ImpactTierV2 } from './types'
 
 type TouchKey = 'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart'
 const MAX_TRACE_SAMPLES = 160
+const RECENT_IMPACT_MIN_IMPULSE = 0.05
+const RECENT_IMPACT_DISPLAY_MS = 1600
 
 type TraceSample = {
   contact: number
@@ -87,12 +90,14 @@ export const Hud = ({
   const hitFxToken = useGameStore((state) => state.hitFxToken)
   const lastHitLabel = useGameStore((state) => state.lastHitLabel)
   const restartRun = useGameStore((state) => state.restartRun)
+  const restartToken = useGameStore((state) => state.restartToken)
   const toggleEngineMuted = useGameStore((state) => state.toggleEngineMuted)
   const setSelectedMapId = useGameStore((state) => state.setSelectedMapId)
   const rerollProceduralMap = useGameStore((state) => state.rerollProceduralMap)
   const clearHitFxLabel = useGameStore((state) => state.clearHitFxLabel)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceSamples, setTraceSamples] = useState<TraceSample[]>([])
+  const [recentImpact, setRecentImpact] = useState<{ tier: ImpactTierV2; impulse: number } | null>(null)
 
   const damagePct = Math.min(100, Math.round((damage / MAX_DAMAGE) * 100))
   useEffect(() => {
@@ -109,6 +114,30 @@ export const Hud = ({
     }, 1600)
     return () => window.clearTimeout(timeout)
   }, [clearHitFxLabel, hitFxToken, lastHitLabel])
+  useEffect(() => {
+    if (physicsTelemetry.latestImpactImpulse <= RECENT_IMPACT_MIN_IMPULSE) {
+      return
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setRecentImpact({
+        tier: physicsTelemetry.latestImpactTier,
+        impulse: physicsTelemetry.latestImpactImpulse,
+      })
+    })
+    const timeout = window.setTimeout(() => {
+      setRecentImpact(null)
+    }, RECENT_IMPACT_DISPLAY_MS)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [physicsTelemetry.latestImpactImpulse, physicsTelemetry.latestImpactTier])
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setRecentImpact(null)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [restartToken, selectedMapId])
   useEffect(() => {
     const next: TraceSample = {
       contact: physicsTelemetry.rampContact,
@@ -192,7 +221,7 @@ export const Hud = ({
             Jump: {physicsTelemetry.jumpState === 'grounded' && physicsTelemetry.jumpCooldownRemaining <= 0.001 ? 'Ready' : `${Math.max(0, physicsTelemetry.jumpCooldownRemaining).toFixed(1)}s`} ({physicsTelemetry.jumpState})
           </div>
           <div className="hud-card hud-card-compact">
-            Hit: {physicsTelemetry.latestImpactTier} ({physicsTelemetry.latestImpactImpulse.toFixed(1)})
+            Hit: {recentImpact ? `${recentImpact.tier} (${recentImpact.impulse.toFixed(1)})` : 'none'}
           </div>
         </div>
         <div className="hud-telemetry-row">
