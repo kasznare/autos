@@ -109,10 +109,10 @@ export const createGameplaySlice: SliceCreator<GameplaySlice> = (set) => ({
       status: 'running',
       restartToken: state.restartToken + 1,
       hitFxStrength: 0,
+      lastHitLabel: '',
       speedKph: 0,
       steeringDeg: 0,
       physicsTelemetry: createInitialPhysicsDebugTelemetryV2(),
       mission: buildMission(0),
     })),
 })
-

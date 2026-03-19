@@ -2,8 +2,10 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
 import { useEffect, useMemo, useRef } from 'react'
 import { BackSide, CanvasTexture, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, Vector3 } from 'three'
+import { Wireframe } from '@react-three/drei'
 import { TRACK_SIZE } from '../config'
-import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
+import { isPointNearRoad, sampleTerrainHeight, type TrackMap } from '../maps'
+import { TERRAIN_COLLISION_MASK } from '../physics/interactionGroups'
 import { useRenderSettings } from '../render/useRenderSettings'
 
 const tempDistanceVec = new Vector3()
@@ -121,7 +123,7 @@ export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) =
           <meshBasicMaterial color={render.sky.horizonColor} side={BackSide} fog={false} />
         </mesh>
       ) : null}
-      <CuboidCollider args={[worldHalf, 0.2, worldHalf]} position={[0, -0.2, 0]} />
+      <CuboidCollider args={[worldHalf, 0.2, worldHalf]} position={[0, -0.2, 0]} collisionGroups={TERRAIN_COLLISION_MASK} />
     </RigidBody>
   )
 }
@@ -404,7 +406,15 @@ export const PathLaneMarkers = ({ map }: { map: TrackMap }) => {
   )
 }
 
-export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terrainSegments?: number }) => {
+export const ProceduralGround = ({
+  map,
+  terrainSegments,
+  showColliderDebug = false,
+}: {
+  map: TrackMap
+  terrainSegments?: number
+  showColliderDebug?: boolean
+}) => {
   const render = useRenderSettings()
   const { camera } = useThree()
   const materialRef = useRef<MeshStandardMaterial | null>(null)
@@ -560,13 +570,24 @@ export const ProceduralGround = ({ map, terrainSegments }: { map: TrackMap; terr
           <meshStandardMaterial ref={materialRef} roughness={0.88} metalness={0.06} />
         )}
       </mesh>
+      {showColliderDebug ? (
+        <Wireframe
+          geometry={terrainGeometry}
+          simplify={false}
+          stroke="#00e4ff"
+          strokeOpacity={0.95}
+          fillOpacity={0}
+          thickness={0.09}
+          backfaceStroke="#00e4ff"
+        />
+      ) : null}
       {render.mode === 'pretty' ? (
         <mesh scale={[220, 220, 220]}>
           <sphereGeometry args={[1, 28, 20]} />
           <meshBasicMaterial color={render.sky.zenithColor} side={BackSide} fog={false} />
         </mesh>
       ) : null}
-      {terrainColliderArgs ? <TrimeshCollider args={terrainColliderArgs} /> : null}
+      {terrainColliderArgs ? <TrimeshCollider args={terrainColliderArgs} collisionGroups={TERRAIN_COLLISION_MASK} /> : null}
     </RigidBody>
   )
 }
@@ -712,7 +733,10 @@ export const RoadsideDetails = ({
       const nz = pseudoNoise(seed + i, 202) * 2 - 1
       const x = nx * half
       const z = nz * half
-      if (isPointOnRoad(map, x, z)) {
+      if (isPointNearRoad(map, x, z, 1.8)) {
+        continue
+      }
+      if (Math.hypot(x - map.startPosition[0], z - map.startPosition[2]) < 12) {
         continue
       }
       const type = pseudoNoise(seed + i, 203) > 0.62 ? 'rock' : 'bush'

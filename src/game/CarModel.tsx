@@ -23,6 +23,8 @@ type CarModelProps = {
   frontRightSteerRad?: number
   wheelSpinRad?: number
   physicsDebugView?: boolean
+  debugWheelPositions?: readonly [readonly [number, number, number], readonly [number, number, number], readonly [number, number, number], readonly [number, number, number]]
+  oneWheelDebugView?: boolean
 }
 
 export const CarModel = ({
@@ -44,6 +46,8 @@ export const CarModel = ({
   frontRightSteerRad = 0,
   wheelSpinRad = 0,
   physicsDebugView = false,
+  debugWheelPositions,
+  oneWheelDebugView = false,
 }: CarModelProps) => {
   const mirrorFellOff = damage >= 58
   const spoilerFellOff = damage >= 72
@@ -56,17 +60,37 @@ export const CarModel = ({
   const safeWheelSpin = Number.isFinite(wheelSpinRad) ? wheelSpinRad : 0
 
   if (physicsDebugView) {
-    const wheelY = 0.04
-    const fl: [number, number, number] = [-0.6, wheelY, 0.8]
-    const fr: [number, number, number] = [0.6, wheelY, 0.8]
-    const rl: [number, number, number] = [-0.6, wheelY, -0.8]
-    const rr: [number, number, number] = [0.6, wheelY, -0.8]
-    const afl: [number, number, number] = [-0.42, 0.32, 0.8]
-    const afr: [number, number, number] = [0.42, 0.32, 0.8]
-    const arl: [number, number, number] = [-0.42, 0.32, -0.8]
-    const arr: [number, number, number] = [0.42, 0.32, -0.8]
+    const fl: [number, number, number] = debugWheelPositions ? [...debugWheelPositions[0]] as [number, number, number] : [-0.6, 0.04, 0.8]
+    const fr: [number, number, number] = debugWheelPositions ? [...debugWheelPositions[1]] as [number, number, number] : [0.6, 0.04, 0.8]
+    const rl: [number, number, number] = debugWheelPositions ? [...debugWheelPositions[2]] as [number, number, number] : [-0.6, 0.04, -0.8]
+    const rr: [number, number, number] = debugWheelPositions ? [...debugWheelPositions[3]] as [number, number, number] : [0.6, 0.04, -0.8]
+    const frameHeight = 0.34
+    const afl: [number, number, number] = [fl[0], fl[1] + frameHeight, fl[2]]
+    const afr: [number, number, number] = [fr[0], fr[1] + frameHeight, fr[2]]
+    const arl: [number, number, number] = [rl[0], rl[1] + frameHeight, rl[2]]
+    const arr: [number, number, number] = [rr[0], rr[1] + frameHeight, rr[2]]
     return (
       <group>
+        {oneWheelDebugView ? (
+          <>
+            <group position={fl} rotation={[0, safeFrontLeftSteer, 0]}>
+              <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
+                <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
+                <meshStandardMaterial color="#2a2f3a" emissive="#6ac3ff" emissiveIntensity={0.12} roughness={0.9} metalness={0} />
+              </mesh>
+              <mesh>
+                <sphereGeometry args={[0.055, 8, 8]} />
+                <meshBasicMaterial color="#8be3ff" />
+              </mesh>
+            </group>
+            <Line points={[afl, fl]} color="#b6f7c2" lineWidth={1.8} />
+            <mesh position={fl} renderOrder={2000}>
+              <sphereGeometry args={[0.13, 12, 12]} />
+              <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
+            </mesh>
+          </>
+        ) : (
+          <>
         <group position={fl} rotation={[0, safeFrontLeftSteer, 0]}>
           <mesh castShadow={!lowPowerMode} rotation={[safeWheelSpin, 0, Math.PI / 2]}>
             <cylinderGeometry args={[0.27, 0.27, 0.3, 12]} />
@@ -131,6 +155,8 @@ export const CarModel = ({
           <sphereGeometry args={[0.13, 12, 12]} />
           <meshBasicMaterial color="#00f0ff" depthTest={false} depthWrite={false} />
         </mesh>
+          </>
+        )}
       </group>
     )
   }

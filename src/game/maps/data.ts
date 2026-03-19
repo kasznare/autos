@@ -85,12 +85,32 @@ const titanPath: TrackPoint[] = [
   [-10, -50],
 ]
 
+const rampPath: TrackPoint[] = [
+  [-4, -92],
+  [4, -92],
+  [4, 92],
+  [-4, 92],
+]
+
+const rampPickups = [
+  { id: 'ramp-s-1', position: [0, -16.6, -70] as [number, number, number], type: 'star' as const },
+  { id: 'ramp-s-2', position: [0, -8.9, -38] as [number, number, number], type: 'star' as const },
+  { id: 'ramp-s-3', position: [0, -1.2, -6] as [number, number, number], type: 'star' as const },
+  { id: 'ramp-s-4', position: [0, 6.5, 26] as [number, number, number], type: 'star' as const },
+  { id: 'ramp-s-5', position: [0, 14.2, 58] as [number, number, number], type: 'star' as const },
+  { id: 'ramp-r-1', position: [1.8, -4.8, -22] as [number, number, number], type: 'repair' as const },
+  { id: 'ramp-r-2', position: [-1.8, 10.4, 42] as [number, number, number], type: 'repair' as const },
+  { id: 'ramp-p-1', position: [2.2, 1.8, 6] as [number, number, number], type: 'part' as const },
+  { id: 'ramp-p-2', position: [-2.2, 12.8, 52] as [number, number, number], type: 'part' as const },
+]
+
 export const MAP_ORDER: MapId[] = ['orbital', 'gaia', 'titan', 'procedural']
 
 export const MAP_LABELS: Record<MapId, string> = {
   orbital: 'Orbital Rift',
   gaia: 'Gaia Megaring',
   titan: 'Titan Brakefield',
+  ramp: 'Sky Ramp',
   procedural: 'Nebula Loop',
 }
 
@@ -380,6 +400,83 @@ export const FIXED_MAPS: Record<Exclude<MapId, 'procedural'>, TrackMap> = {
       createEnvironment('titan-bird-a', 'bird', [0, 37, 0], 1.25, '#2e3948', 1.5),
       createEnvironment('titan-bird-b', 'bird', [22, 33, -24], 1.08, '#344152', 1.25),
       createEnvironment('titan-bird-c', 'bird', [-24, 35, 29], 1.08, '#344152', 1.38),
+    ],
+  },
+  ramp: {
+    schemaVersion: '3.0.0',
+    id: 'ramp',
+    sourceId: 'ramp',
+    label: MAP_LABELS.ramp,
+    shape: 'path',
+    worldHalf: 100,
+    outerHalf: 0,
+    innerHalf: 0,
+    roadWidth: 24,
+    laneCount: 2,
+    laneWidth: 12,
+    detailDensity: 0.95,
+    roadPath: rampPath,
+    startPosition: [0, 0.38, -84],
+    startYaw: 0,
+    gravity: [0, -10.2, 0],
+    terrain: {
+      profile: 'rolling',
+      amplitude: 22,
+      frequency: 0.01,
+    },
+    materialZones: [
+      { id: 'global-asphalt', shape: 'global', material: 'asphalt' },
+    ],
+    materialTuning: {
+      asphalt: { tractionMultiplier: 1.03, dragMultiplier: 1, topSpeedMultiplier: 1 },
+    },
+    spawnRules: {
+      pickups: {
+        initial: rampPickups,
+        minCounts: { star: 5, repair: 2, part: 2 },
+        bonusRepairChance: 0.25,
+        bonusPartChance: 0.2,
+      },
+      hazards: {
+        critters: {
+          enabled: false,
+          count: 0,
+          breakSpeed: 3.1,
+          hitRadius: 1.05,
+          hitCheckInterval: 0.08,
+          respawnSeconds: 4.2,
+        },
+        destructibles: {
+          initialCount: 0,
+          spawnPoints: [],
+          breakSpeed: 6.2,
+          respawnSeconds: 4.4,
+          palette: ['#d39d58', '#be8744', '#c19352', '#9d7241'],
+        },
+      },
+      obstacles: {
+        static: [],
+        movable: [],
+      },
+    },
+    gates: [
+      { position: [0, -13, -56], rotation: [0, Math.PI / 2, 0] },
+      { position: [0, -5.4, -24], rotation: [0, Math.PI / 2, 0] },
+      { position: [0, 2.2, 8], rotation: [0, Math.PI / 2, 0] },
+      { position: [0, 9.8, 40], rotation: [0, Math.PI / 2, 0] },
+      { position: [0, 17.4, 72], rotation: [0, Math.PI / 2, 0] },
+    ],
+    trees: [
+      createTree('ramp-t1', -72, -76, 1.1, 'cone'),
+      createTree('ramp-t2', 74, -74, 1.1, 'round'),
+      createTree('ramp-t3', -76, 74, 1.1, 'round'),
+      createTree('ramp-t4', 72, 76, 1.1, 'cone'),
+    ],
+    interactables: [],
+    environmentObjects: [
+      createEnvironment('ramp-sun', 'sun', [74, 86, -44], 8.8, '#ffe0a3'),
+      createEnvironment('ramp-cloud-a', 'cloud', [-32, 58, -66], 1.55, '#eff8ff', 0.5),
+      createEnvironment('ramp-cloud-b', 'cloud', [36, 54, 52], 1.42, '#eff8ff', 0.42),
     ],
   },
 }

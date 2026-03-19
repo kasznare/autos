@@ -10,6 +10,7 @@ export type BatterySaverMode = 'auto' | 'on' | 'off'
 export type RenderMode = 'flat-debug' | 'pretty'
 export type RenderQualityTier = 'low' | 'medium' | 'high' | 'ultra'
 export type MissionType = 'collect_stars' | 'collect_parts' | 'pass_gates' | 'clean_drive'
+export type VehiclePhysicsMode = 'one_wheel' | 'two_wheel' | 'four_wheel'
 
 export type ActiveMission = {
   id: number
@@ -74,6 +75,7 @@ export type UiSlice = {
   renderMode: RenderMode
   renderQualityTier: RenderQualityTier
   renderWireframe: boolean
+  vehiclePhysicsMode: VehiclePhysicsMode
   hitFxToken: number
   hitFxStrength: number
   lastHitLabel: string
@@ -86,6 +88,7 @@ export type UiSlice = {
   setRenderMode: (mode: RenderMode) => void
   setRenderQualityTier: (tier: RenderQualityTier) => void
   setRenderWireframe: (enabled: boolean) => void
+  setVehiclePhysicsMode: (mode: VehiclePhysicsMode) => void
   resetUiSetup: () => void
   triggerHitFx: (strength: number, label?: string) => void
   setTelemetry: (speedKph: number, steeringDeg: number) => void

@@ -10,6 +10,7 @@ import { emitPhysicsEventV2, getMaterialResponseV2, normalizeCollisionMaterialV2
 import { useRenderSettings } from '../render/useRenderSettings'
 import {
   buildTrafficPath,
+  createTrafficProgresses,
   getClosestProgressOnLoop,
   getLoopLength,
   interpolateAngle,
@@ -57,13 +58,23 @@ export const TrafficCars = ({
   const render = useRenderSettings()
   const path = useMemo(() => buildTrafficPath(map), [map])
   const loopLength = useMemo(() => getLoopLength(path), [path])
+  const startX = map.startPosition[0]
+  const startZ = map.startPosition[2]
+  const startProgress = useMemo(
+    () => getClosestProgressOnLoop(path, startX, startZ).progress,
+    [path, startX, startZ],
+  )
+  const initialTrafficProgresses = useMemo(
+    () => createTrafficProgresses(path, startProgress, TRAFFIC_CAR_COUNT),
+    [path, startProgress],
+  )
   const carRefs = useRef<Array<RapierRigidBody | null>>([])
   const progressRefs = useRef<number[]>([])
   const stepTimerRef = useRef(0)
 
   useEffect(() => {
-    progressRefs.current = Array.from({ length: TRAFFIC_CAR_COUNT }, (_, idx) => idx / TRAFFIC_CAR_COUNT)
-  }, [restartToken, map.id])
+    progressRefs.current = [...initialTrafficProgresses]
+  }, [initialTrafficProgresses, restartToken])
 
   useFrame((_, delta) => {
     stepTimerRef.current += delta

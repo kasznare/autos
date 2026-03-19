@@ -145,6 +145,7 @@ export const GameScene = ({
   const setRenderPerfTelemetry = useGameStore((state) => state.setRenderPerfTelemetry)
 
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
+  const rampDebugMap = map.sourceId === 'ramp'
   const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
   const activeMovableObstacles = useMemo(() => map.spawnRules.obstacles.movable, [map])
   const mapSpawnObstacles = useMemo(
@@ -233,20 +234,22 @@ export const GameScene = ({
           <Curbs outerHalf={map.outerHalf} innerHalf={map.innerHalf} />
         </>
       ) : (
-        <ProceduralGround map={map} terrainSegments={qualityConfig.terrainSegments} />
+        <ProceduralGround map={map} terrainSegments={qualityConfig.terrainSegments} showColliderDebug={rampDebugMap} />
       )}
       <CheckpointGates gates={map.gates} />
-      {map.shape === 'path' ? (
+      {map.shape === 'path' && !rampDebugMap ? (
         <>
           <RoadPath map={map} terrainSegments={qualityConfig.terrainSegments} />
           <PathLaneMarkers map={map} />
         </>
       ) : null}
-      <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} density={qualityConfig.roadsideDensity} castShadows={qualityTier === 'high'} />
-      <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />
+      {rampDebugMap ? null : (
+        <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} density={qualityConfig.roadsideDensity} castShadows={qualityTier === 'high'} />
+      )}
+      {rampDebugMap ? null : <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />}
       <MapEnvironment objects={map.environmentObjects} restartToken={restartToken} />
       <MapInteractables map={map} restartToken={restartToken} />
-      {map.shape === 'path' ? (
+      {map.shape === 'path' && map.sourceId !== 'ramp' ? (
         <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} updateHz={qualityConfig.trafficUpdateHz} />
       ) : null}
       {activeStaticObstacles.map((obstacle) => (

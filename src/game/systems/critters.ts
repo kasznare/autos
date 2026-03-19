@@ -1,4 +1,4 @@
-import { isPointOnRoad, sampleTerrainHeight, type TrackMap } from '../maps'
+import { isPointNearRoad, sampleTerrainHeight, type TrackMap } from '../maps'
 
 export type RuntimeCritter = {
   id: string
@@ -25,7 +25,12 @@ export const createCritters = (map: TrackMap, seed: number): RuntimeCritter[] =>
   for (let i = 0; i < 1200 && result.length < critterCount; i += 1) {
     const x = (pseudoNoise(seed + i, 301) * 2 - 1) * half
     const z = (pseudoNoise(seed + i, 302) * 2 - 1) * half
-    if (isPointOnRoad(map, x, z)) {
+    const radius = 1 + pseudoNoise(seed + i, 304) * 2.6
+    const roadClearance = radius + 2.4
+    if (isPointNearRoad(map, x, z, roadClearance)) {
+      continue
+    }
+    if (Math.hypot(x - map.startPosition[0], z - map.startPosition[2]) < 24 + radius) {
       continue
     }
     const y = sampleTerrainHeight(map, x, z) + 0.38
@@ -33,7 +38,7 @@ export const createCritters = (map: TrackMap, seed: number): RuntimeCritter[] =>
       id: `critter-${seed}-${result.length}`,
       home: [x, z],
       speed: 0.7 + pseudoNoise(seed + i, 303) * 0.8,
-      radius: 1 + pseudoNoise(seed + i, 304) * 2.6,
+      radius,
       phase: pseudoNoise(seed + i, 305) * Math.PI * 2,
       headingOffset: pseudoNoise(seed + i, 306) * 1.6,
       state: 'alive',
@@ -44,4 +49,3 @@ export const createCritters = (map: TrackMap, seed: number): RuntimeCritter[] =>
   }
   return result
 }
-

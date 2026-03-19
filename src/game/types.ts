@@ -122,6 +122,12 @@ export type PhysicsDebugTelemetryV2 = {
   speedClampTrips: number
   driveMode: 'native' | '2wd-rwd'
   wheelDebugRows: readonly [string, string, string, string]
+  rampContact: number
+  rampCompression: number
+  rampSpringForce: number
+  rampDriveForce: number
+  rampLateralForce: number
+  rampTractionLimit: number
 }
 
 export type WorldObstacle = {

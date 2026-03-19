@@ -10,6 +10,13 @@ const smoothStep = (edge0: number, edge1: number, x: number) => {
   return t * t * (3 - 2 * t)
 }
 
+const normalizeAngleDelta = (angle: number) => {
+  let wrapped = angle
+  while (wrapped > Math.PI) wrapped -= Math.PI * 2
+  while (wrapped < -Math.PI) wrapped += Math.PI * 2
+  return wrapped
+}
+
 const distanceToSegment = (px: number, pz: number, ax: number, az: number, bx: number, bz: number) => {
   const abx = bx - ax
   const abz = bz - az
@@ -81,6 +88,14 @@ export const isPointOnRoad = (map: TrackMap, x: number, z: number) => {
   return isPathRoadAt(x, z, map.roadPath, map.roadWidth)
 }
 
+export const isPointNearRoad = (map: TrackMap, x: number, z: number, margin = 0) => {
+  if (map.shape === 'ring') {
+    const half = Math.max(Math.abs(x), Math.abs(z))
+    return half >= map.innerHalf - margin && half <= map.outerHalf + margin
+  }
+  return getPathRoadProximity(x, z, map.roadPath).distance <= map.roadWidth * 0.5 + margin
+}
+
 const materialZoneContainsPoint = (map: TrackMap, x: number, z: number, zone: TrackMap['materialZones'][number]) => {
   if (zone.shape === 'global') {
     return true
@@ -118,6 +133,11 @@ export const getMaterialTuningAt = (map: TrackMap, x: number, z: number): Materi
 }
 
 export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
+  if (map.sourceId === 'ramp') {
+    const climbRange = Math.max(1, map.worldHalf - 8)
+    const inclineT = Math.max(-1, Math.min(1, z / climbRange))
+    return inclineT * map.terrain.amplitude
+  }
   if (map.terrain.amplitude <= 0) {
     return 0
   }
@@ -138,6 +158,14 @@ export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
     const sideSlopeFade = smoothStep(map.roadWidth * 0.95, sideSlopeRange, roadInfo.distance)
     const sideSlopeNorm = Math.max(-1, Math.min(1, roadInfo.signedDistance / Math.max(0.001, map.roadWidth * 0.9)))
     const sideSlope = sideSlopeNorm * map.terrain.amplitude * 0.045 * sideSlopeFade
+    const startDistance = Math.hypot(x - map.startPosition[0], z - map.startPosition[2])
+    const startFlatBlend = 1 - smoothStep(map.roadWidth * 1.1, map.roadWidth * 4.8, startDistance)
+    const startRoadBase =
+      (Math.sin(map.startPosition[0] * f * 0.19) * 0.55 +
+        Math.cos(map.startPosition[2] * f * 0.17) * 0.45 +
+        Math.sin((map.startPosition[0] + map.startPosition[2]) * f * 0.12) * 0.35) *
+      map.terrain.amplitude *
+      0.06
     const roadBase =
       (Math.sin(x * f * 0.19) * 0.55 + Math.cos(z * f * 0.17) * 0.45 + Math.sin((x + z) * f * 0.12) * 0.35) *
         map.terrain.amplitude *
@@ -148,6 +176,7 @@ export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
     const blend = smoothStep(flattenStart, flattenEnd, roadInfo.distance)
     const flattened = roadBase + (height - roadBase) * blend
     height = roadBase + (flattened - roadBase) * (1 - laneCoreBlend * 0.92)
+    height = startRoadBase + (height - startRoadBase) * (1 - startFlatBlend * 0.94)
   }
   return height
 }
@@ -163,6 +192,30 @@ const mulberry32 = (seed: number) => {
   }
 }
 
+const wrapPathIndex = (points: TrackPoint[], idx: number) => ((idx % points.length) + points.length) % points.length
+
+const getPathDirection = (points: TrackPoint[], idx: number) => {
+  const a = points[wrapPathIndex(points, idx)]
+  const b = points[wrapPathIndex(points, idx + 1)]
+  return Math.atan2(b[0] - a[0], b[1] - a[1])
+}
+
+const getPathSegmentLength = (points: TrackPoint[], idx: number) => {
+  const a = points[wrapPathIndex(points, idx)]
+  const b = points[wrapPathIndex(points, idx + 1)]
+  return Math.hypot(b[0] - a[0], b[1] - a[1])
+}
+
+const smoothProceduralPath = (points: TrackPoint[]) =>
+  points.map((point, idx, arr) => {
+    const prev = arr[(idx - 1 + arr.length) % arr.length]
+    const next = arr[(idx + 1) % arr.length]
+    return [
+      point[0] * 0.52 + (prev[0] + next[0]) * 0.24,
+      point[1] * 0.52 + (prev[1] + next[1]) * 0.24,
+    ] as TrackPoint
+  })
+
 const generateProceduralPath = (seed: number, worldHalf: number) => {
   const rand = mulberry32(seed)
   const points: TrackPoint[] = []
@@ -176,7 +229,23 @@ const generateProceduralPath = (seed: number, worldHalf: number) => {
     const radius = minRadius + rand() * (maxRadius - minRadius)
     points.push([Math.cos(angle) * radius, Math.sin(angle) * radius])
   }
-  return points
+  return smoothProceduralPath(smoothProceduralPath(points))
+}
+
+const getBestProceduralStartSegment = (points: TrackPoint[]) => {
+  let bestIndex = 0
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (let i = 0; i < points.length; i += 1) {
+    const turnIn = Math.abs(normalizeAngleDelta(getPathDirection(points, i) - getPathDirection(points, i - 1)))
+    const turnOut = Math.abs(normalizeAngleDelta(getPathDirection(points, i + 1) - getPathDirection(points, i)))
+    const segmentLength = getPathSegmentLength(points, i)
+    const score = segmentLength * 0.55 - Math.max(turnIn, turnOut) * 68 - (turnIn + turnOut) * 14
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = i
+    }
+  }
+  return bestIndex
 }
 
 const createTree = (id: string, x: number, z: number, scale: number, variant: 'round' | 'cone') => ({
@@ -194,10 +263,10 @@ const generateProceduralTrees = (seed: number, map: TrackMap) => {
   for (let i = 0; i < 1200 && trees.length < targetCount; i += 1) {
     const x = (rand() * 2 - 1) * half
     const z = (rand() * 2 - 1) * half
-    if (isPathRoadAt(x, z, map.roadPath, map.roadWidth + 4.2)) {
+    if (isPointNearRoad(map, x, z, 2.1)) {
       continue
     }
-    if (Math.hypot(x - map.startPosition[0], z - map.startPosition[2]) < 12) {
+    if (Math.hypot(x - map.startPosition[0], z - map.startPosition[2]) < 14) {
       continue
     }
     trees.push(createTree(`procedural-tree-${seed}-${trees.length}`, x, z, 0.82 + rand() * 0.6, rand() > 0.46 ? 'round' : 'cone'))
@@ -211,15 +280,21 @@ const generateProceduralInteractables = (seed: number, map: TrackMap) => {
   for (let i = 0; i < 180 && interactables.length < 28; i += 1) {
     const x = (rand() * 2 - 1) * (map.worldHalf - 14)
     const z = (rand() * 2 - 1) * (map.worldHalf - 14)
-    if (isPointOnRoad(map, x, z)) {
+    const asRamp = rand() > 0.64
+    const size: [number, number, number] = asRamp ? [7.8, 1.05, 3.8] : [1, 1, 1]
+    const roadClearance = Math.hypot(size[0] * 0.5, size[2] * 0.5) + 1.6
+    const startClearance = 12 + roadClearance
+    if (isPointNearRoad(map, x, z, roadClearance)) {
       continue
     }
-    const asRamp = rand() > 0.64
+    if (Math.hypot(x - map.startPosition[0], z - map.startPosition[2]) < startClearance) {
+      continue
+    }
     interactables.push({
       id: `proc-int-${seed}-${interactables.length}`,
       kind: asRamp ? 'ramp' : 'crate',
       position: [x, asRamp ? 0.56 : 0.52, z],
-      size: asRamp ? [7.8, 1.05, 3.8] : [1, 1, 1],
+      size,
       rotation: asRamp ? [0, rand() * Math.PI * 2, 0] : undefined,
       material: asRamp ? 'medium' : 'soft',
       collider: asRamp ? 'fixed' : 'dynamic',
@@ -243,9 +318,16 @@ const createProceduralMap = (seed: number): TrackMap => {
   const roadPath = generateProceduralPath(seed, worldHalf)
   const roadWidth = 10
   const laneCount = 2
-  const start = roadPath[0]
-  const next = roadPath[1]
-  const startYaw = Math.atan2(next[0] - start[0], next[1] - start[1])
+  const startSegmentIndex = getBestProceduralStartSegment(roadPath)
+  const startSegmentStart = roadPath[startSegmentIndex]
+  const startSegmentEnd = roadPath[(startSegmentIndex + 1) % roadPath.length]
+  const startT = 0.12
+  const startPoint: TrackPoint = [
+    startSegmentStart[0] + (startSegmentEnd[0] - startSegmentStart[0]) * startT,
+    startSegmentStart[1] + (startSegmentEnd[1] - startSegmentStart[1]) * startT,
+  ]
+  const startYaw = Math.atan2(startSegmentEnd[0] - startSegmentStart[0], startSegmentEnd[1] - startSegmentStart[1])
+  const pathPoint = (offset: number) => roadPath[wrapPathIndex(roadPath, startSegmentIndex + offset)]
 
   const map: TrackMap = {
     schemaVersion: '3.0.0',
@@ -261,7 +343,7 @@ const createProceduralMap = (seed: number): TrackMap => {
     laneWidth: roadWidth / laneCount,
     detailDensity: 2.6,
     roadPath,
-    startPosition: [start[0], 0.38, start[1]],
+    startPosition: [startPoint[0], 0.38, startPoint[1]],
     startYaw,
     gravity: [0, -7.8, 0],
     terrain: {
@@ -282,11 +364,11 @@ const createProceduralMap = (seed: number): TrackMap => {
     spawnRules: {
       pickups: {
         initial: [
-          { id: 's-1', position: [roadPath[0][0], 0.8, roadPath[0][1]], type: 'star' },
-          { id: 's-2', position: [roadPath[4][0], 0.8, roadPath[4][1]], type: 'star' },
-          { id: 's-3', position: [roadPath[8][0], 0.8, roadPath[8][1]], type: 'star' },
-          { id: 'r-1', position: [roadPath[10][0], 0.8, roadPath[10][1]], type: 'repair' },
-          { id: 'p-1', position: [roadPath[15][0], 0.8, roadPath[15][1]], type: 'part' },
+          { id: 's-1', position: [pathPoint(3)[0], 0.8, pathPoint(3)[1]], type: 'star' },
+          { id: 's-2', position: [pathPoint(7)[0], 0.8, pathPoint(7)[1]], type: 'star' },
+          { id: 's-3', position: [pathPoint(11)[0], 0.8, pathPoint(11)[1]], type: 'star' },
+          { id: 'r-1', position: [pathPoint(15)[0], 0.8, pathPoint(15)[1]], type: 'repair' },
+          { id: 'p-1', position: [pathPoint(19)[0], 0.8, pathPoint(19)[1]], type: 'part' },
         ],
         minCounts: { star: 5, repair: 3, part: 2 },
         bonusRepairChance: 0.45,
@@ -304,14 +386,14 @@ const createProceduralMap = (seed: number): TrackMap => {
         destructibles: {
           initialCount: 5,
           spawnPoints: [
-            [roadPath[1][0], 0.7, roadPath[1][1]],
-            [roadPath[5][0], 0.7, roadPath[5][1]],
-            [roadPath[9][0], 0.7, roadPath[9][1]],
-            [roadPath[13][0], 0.7, roadPath[13][1]],
-            [roadPath[17][0], 0.7, roadPath[17][1]],
-            [roadPath[3][0], 0.7, roadPath[3][1]],
-            [roadPath[7][0], 0.7, roadPath[7][1]],
-            [roadPath[11][0], 0.7, roadPath[11][1]],
+            [pathPoint(4)[0], 0.7, pathPoint(4)[1]],
+            [pathPoint(6)[0], 0.7, pathPoint(6)[1]],
+            [pathPoint(8)[0], 0.7, pathPoint(8)[1]],
+            [pathPoint(10)[0], 0.7, pathPoint(10)[1]],
+            [pathPoint(12)[0], 0.7, pathPoint(12)[1]],
+            [pathPoint(14)[0], 0.7, pathPoint(14)[1]],
+            [pathPoint(16)[0], 0.7, pathPoint(16)[1]],
+            [pathPoint(18)[0], 0.7, pathPoint(18)[1]],
           ],
           breakSpeed: 6.5,
           respawnSeconds: 3.2,
@@ -324,11 +406,11 @@ const createProceduralMap = (seed: number): TrackMap => {
       },
     },
     gates: [
-      gateFromPathSegment(roadPath, 2),
-      gateFromPathSegment(roadPath, 6),
-      gateFromPathSegment(roadPath, 10),
-      gateFromPathSegment(roadPath, 14),
-      gateFromPathSegment(roadPath, 18),
+      gateFromPathSegment(roadPath, startSegmentIndex + 2),
+      gateFromPathSegment(roadPath, startSegmentIndex + 6),
+      gateFromPathSegment(roadPath, startSegmentIndex + 10),
+      gateFromPathSegment(roadPath, startSegmentIndex + 14),
+      gateFromPathSegment(roadPath, startSegmentIndex + 18),
     ],
     trees: [],
     interactables: [],

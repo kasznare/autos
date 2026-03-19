@@ -5,6 +5,7 @@ export {
   getMaterialTuningAt,
   getRingLaneGuideHalfSizes,
   getRoadDetailCount,
+  isPointNearRoad,
   getSurfaceMaterialAt,
   getTrackMap,
   isPointOnRoad,

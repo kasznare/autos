@@ -22,6 +22,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
   renderMode: initialUiSetup.renderMode,
   renderQualityTier: initialUiSetup.renderQualityTier,
   renderWireframe: initialUiSetup.renderWireframe,
+  vehiclePhysicsMode: 'four_wheel',
   hitFxToken: 0,
   hitFxStrength: 0,
   lastHitLabel: '',
@@ -121,6 +122,11 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
         renderWireframe: enabled,
       }
     }),
+  setVehiclePhysicsMode: (mode) =>
+    set((state) => ({
+      ...state,
+      vehiclePhysicsMode: mode,
+    })),
   resetUiSetup: () =>
     set((state) => {
       resetUiSetupStorage()
@@ -131,6 +137,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
         renderMode: DEFAULT_UI_SETUP.renderMode,
         renderQualityTier: DEFAULT_UI_SETUP.renderQualityTier,
         renderWireframe: DEFAULT_UI_SETUP.renderWireframe,
+        vehiclePhysicsMode: 'four_wheel',
       }
     }),
   triggerHitFx: (strength, label = '') =>

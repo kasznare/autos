@@ -97,5 +97,18 @@ export const getClosestProgressOnLoop = (points: [number, number][], x: number, 
   return { progress: ((bestProgress % 1) + 1) % 1, distance: bestDistance }
 }
 
+export const createTrafficProgresses = (points: [number, number][], startProgress: number, count: number, clearanceMeters = 38) => {
+  if (count <= 0) {
+    return []
+  }
+  const loopLength = getLoopLength(points)
+  const blockedFraction = Math.min(0.32, clearanceMeters / Math.max(1, loopLength))
+  const availableFraction = Math.max(0.08, 1 - blockedFraction)
+  return Array.from({ length: count }, (_, idx) => {
+    const progress = startProgress + blockedFraction * 0.5 + ((idx + 0.5) / count) * availableFraction
+    return ((progress % 1) + 1) % 1
+  })
+}
+
 export const isPlayerOnTrafficPath = (map: TrackMap, x: number, z: number, laneDistance: number) =>
   isPointOnRoad(map, x, z) && laneDistance <= map.roadWidth * 0.6

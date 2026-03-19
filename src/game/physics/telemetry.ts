@@ -15,4 +15,10 @@ export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 
   speedClampTrips: 0,
   driveMode: 'native',
   wheelDebugRows: ['-', '-', '-', '-'],
+  rampContact: 0,
+  rampCompression: 0,
+  rampSpringForce: 0,
+  rampDriveForce: 0,
+  rampLateralForce: 0,
+  rampTractionLimit: 0,
 })

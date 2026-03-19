@@ -276,6 +276,92 @@ body {
   pointer-events: auto;
 }
 
+.trace-panel {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  width: min(300px, 78vw);
+  background: rgba(8, 24, 36, 0.84);
+  border: 1px solid rgba(166, 224, 255, 0.44);
+  border-radius: 0.75rem;
+  box-shadow: 0 8px 26px rgba(5, 17, 26, 0.35);
+  backdrop-filter: blur(4px);
+  padding: 0.5rem;
+  pointer-events: auto;
+}
+
+.trace-title {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: #cdeeff;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.trace-readout {
+  margin-top: 0.2rem;
+  font-size: 0.67rem;
+  color: #bee7ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.trace-plot {
+  margin-top: 0.34rem;
+  background: rgba(7, 16, 24, 0.82);
+  border: 1px solid rgba(139, 206, 242, 0.24);
+  border-radius: 0.5rem;
+  padding: 0.24rem;
+}
+
+.trace-label {
+  font-size: 0.62rem;
+  color: #89cdee;
+  margin-bottom: 0.16rem;
+  letter-spacing: 0.03em;
+}
+
+.trace-plot svg {
+  display: block;
+  width: 100%;
+  height: 52px;
+}
+
+.trace-line {
+  fill: none;
+  stroke-width: 1.65;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.trace-line-contact {
+  stroke: #8bf8ff;
+}
+
+.trace-line-compression {
+  stroke: #ffe17a;
+}
+
+.trace-line-drive {
+  stroke: #a9ff9b;
+}
+
+.trace-line-lateral {
+  stroke: #ff9f8e;
+}
+
+.trace-line-traction {
+  stroke: #7fbcff;
+}
+
+.trace-line-slip {
+  stroke: #f1b4ff;
+}
+
+.trace-line-impact {
+  stroke: #ff5f63;
+}
+
 .telemetry-chip {
   background: rgba(255, 255, 255, 0.9);
   border: 2px solid rgba(255, 255, 255, 0.95);
@@ -893,6 +979,12 @@ body {
 
   .hud-panel {
     width: min(350px, 92vw);
+  }
+
+  .trace-panel {
+    top: 0.65rem;
+    left: 0.65rem;
+    width: min(270px, 78vw);
   }
 
   .hud-card {

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "physics:bounce": "node scripts/smoke-bounce.mjs",
     "physics:runtime": "npm exec -- tsx scripts/physics-runtime.ts",
+    "physics:scenarios": "npm exec -- tsx scripts/physics-scenarios.ts",
     "maps:smoke": "tsx scripts/smoke-maps.ts",
     "preview": "vite preview",
     "verify:builds": "tsx scripts/verify-vehicle-builds.ts"

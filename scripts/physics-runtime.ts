@@ -17,19 +17,6 @@ const quatFromYaw = (yaw: number) => ({
   w: Math.cos(yaw / 2),
 })
 
-const quatFromAxisAngle = (ax: number, ay: number, az: number, radians: number) => {
-  const half = radians * 0.5
-  const s = Math.sin(half)
-  return { x: ax * s, y: ay * s, z: az * s, w: Math.cos(half) }
-}
-
-const wheelLocalAnchors = [
-  { x: -0.74, y: -0.12, z: 0.94 },
-  { x: 0.74, y: -0.12, z: 0.94 },
-  { x: -0.74, y: -0.12, z: -0.9 },
-  { x: 0.74, y: -0.12, z: -0.9 },
-] as const
-
 const run = async () => {
   await RAPIER.init()
   const map = getTrackMap('gaia', 1)
@@ -51,37 +38,13 @@ const run = async () => {
       .setTranslation(startPos.x, startPos.y, startPos.z)
       .setRotation(quatFromYaw(startYaw))
       .setCanSleep(false)
-      .setLinearDamping(0.18)
-      .setAngularDamping(1.8),
+      .setLinearDamping(0.28)
+      .setAngularDamping(3.2),
   )
-  world.createCollider(RAPIER.ColliderDesc.cuboid(0.56, 0.28, 1.12).setFriction(0.95).setRestitution(0.02), chassis)
-
-  const wheelBodies = wheelLocalAnchors.map((anchor) => {
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(startPos.x + anchor.x, startPos.y + anchor.y, startPos.z + anchor.z)
-        .setRotation(quatFromYaw(startYaw))
-        .restrictRotations(false, true, true, true)
-        .setCanSleep(false)
-        .setLinearDamping(1.1)
-        .setAngularDamping(4.2),
-    )
-    world.createCollider(
-      RAPIER.ColliderDesc.cylinder(0.14, 0.22)
-        .setRotation(quatFromAxisAngle(0, 0, 1, Math.PI / 2))
-        .setFriction(2.1)
-        .setRestitution(0.02),
-      body,
-    )
-    return body
-  })
-
-  for (let i = 0; i < wheelBodies.length; i += 1) {
-    const anchor = wheelLocalAnchors[i]
-    const wheel = wheelBodies[i]
-    world.createImpulseJoint(RAPIER.JointData.spring(0.01, 18, 10, anchor, { x: 0, y: 0, z: 0 }), chassis, wheel, true)
-    world.createImpulseJoint(RAPIER.JointData.revolute(anchor, { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }), chassis, wheel, true)
-  }
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(0.56, 0.28, 1.12).setTranslation(0, 0.12, 0).setFriction(0.95).setRestitution(0.02),
+    chassis,
+  )
 
   const armorTimerRef = { current: 0 }
   const sputterTimerRef = { current: 0 }

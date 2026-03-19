@@ -5,8 +5,8 @@ import { getMaterialTuningAt, getSurfaceMaterialAt, sampleTerrainHeight, type Tr
 import { updateEngineSound } from '../../sfx'
 import type { DriveInputState } from '../../keys'
 import type { Pickup, VehiclePhysicsTuning } from '../../types'
-import { normalizeAngleDelta } from './helpers'
 import type { DriveCommand } from '../../vehicle/drivetrain'
+import type { VehiclePhysicsMode } from '../../store/types'
 
 type MutableRef<T> = { current: T }
 
@@ -21,6 +21,12 @@ type TelemetryFns = {
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
+    rampContact?: number
+    rampCompression?: number
+    rampSpringForce?: number
+    rampDriveForce?: number
+    rampLateralForce?: number
+    rampTractionLimit?: number
   }) => void
 }
 
@@ -377,6 +383,12 @@ type DynamicsParams = {
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
+    rampContact?: number
+    rampCompression?: number
+    rampSpringForce?: number
+    rampDriveForce?: number
+    rampLateralForce?: number
+    rampTractionLimit?: number
   }) => void
   onPlayerPosition: (position: [number, number, number]) => void
   addDamage: (amount: number) => void
@@ -384,6 +396,7 @@ type DynamicsParams = {
   getImpactLabel: (material: 'rubber' | 'wood' | 'metal' | 'rock' | 'glass', tier: 'minor' | 'moderate' | 'major' | 'critical', scrape?: boolean) => string
   driveCommand?: DriveCommand
   wheelContactPoints?: readonly DynamicsWheelContactPoint[]
+  physicsMode?: VehiclePhysicsMode
   telemetryTimerRef: MutableRef<number>
 }
 
@@ -394,11 +407,6 @@ const DEFAULT_WHEEL_CONTACT_POINTS: readonly DynamicsWheelContactPoint[] = [
   { x: -0.62, y: -0.12, z: -0.9, axle: 'rear', side: 'left' },
   { x: 0.62, y: -0.12, z: -0.9, axle: 'rear', side: 'right' },
 ]
-const DRIVE_ANTI_LIFT = {
-  minContactRatio: 0.16,
-  upVelClamp: 0.22,
-  downBiasImpulse: 0.2,
-}
 const SAFETY_LOCK = {
   disableJump: true,
 }
@@ -419,6 +427,58 @@ const rotateByQuat = (
     y: v.y + uvy * s + uuvy * 2,
     z: v.z + uvz * s + uuvz * 2,
   }
+}
+
+const cross = (
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+) => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x,
+})
+
+const dot = (
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+) => a.x * b.x + a.y * b.y + a.z * b.z
+
+const normalize = (
+  value: { x: number; y: number; z: number },
+  fallback: { x: number; y: number; z: number },
+) => {
+  const length = Math.hypot(value.x, value.y, value.z)
+  if (length <= 1e-5) {
+    return fallback
+  }
+  return {
+    x: value.x / length,
+    y: value.y / length,
+    z: value.z / length,
+  }
+}
+
+const sampleTerrainNormal = (map: TrackMap, x: number, z: number, sample = 1.2) => {
+  if (map.shape === 'ring' || map.terrain.amplitude <= 0) {
+    return { x: 0, y: 1, z: 0 }
+  }
+  const gx0 = getDriveTerrainHeight(map, x - sample, z)
+  const gx1 = getDriveTerrainHeight(map, x + sample, z)
+  const gz0 = getDriveTerrainHeight(map, x, z - sample)
+  const gz1 = getDriveTerrainHeight(map, x, z + sample)
+  let nx = gx0 - gx1
+  let ny = sample * 2
+  let nz = gz0 - gz1
+  const length = Math.hypot(nx, ny, nz) || 1
+  nx /= length
+  ny /= length
+  nz /= length
+  if (ny < 0) {
+    nx *= -1
+    ny *= -1
+    nz *= -1
+  }
+  return { x: nx, y: ny, z: nz }
 }
 
 export const runVehicleDynamicsStep = ({
@@ -451,6 +511,7 @@ export const runVehicleDynamicsStep = ({
   getImpactLabel,
   driveCommand,
   wheelContactPoints,
+  physicsMode = 'four_wheel',
   telemetryTimerRef,
 }: DynamicsParams) => {
   const pos = body.translation()
@@ -469,7 +530,6 @@ export const runVehicleDynamicsStep = ({
   const rightX = Math.cos(yaw)
   const rightZ = -Math.sin(yaw)
   const forwardSpeed = linVel.x * forwardX + linVel.z * forwardZ
-  const lateralSpeed = linVel.x * rightX + linVel.z * rightZ
   const surfaceMaterial = getSurfaceMaterialAt(map, pos.x, pos.z)
   const materialTuning = getMaterialTuningAt(map, pos.x, pos.z)
   const onRoad = surfaceMaterial === 'asphalt' || surfaceMaterial === 'basalt' || surfaceMaterial === 'regolith'
@@ -486,20 +546,26 @@ export const runVehicleDynamicsStep = ({
   const steeringScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.steeringLoss
   const gripScale = 1 - damageRatio * DAMAGE_DRIVE_EFFECTS.gripLoss
   const driveMass = Math.max(0.8, body.mass())
+  const rampMap = map.sourceId === 'ramp'
+  const suspensionRestLength = VEHICLE_PHYSICS.suspensionRideHeight + 0.06
+  const wheelContactThreshold = VEHICLE_PHYSICS.suspensionRideHeight + (rampMap ? 0.24 : 0.08)
 
   const angVel = body.angvel()
   const contactPoints = wheelContactPoints && wheelContactPoints.length > 0 ? wheelContactPoints : DEFAULT_WHEEL_CONTACT_POINTS
+  const supportContacts: Array<{
+    anchorWorld: { x: number; y: number; z: number }
+    normal: { x: number; y: number; z: number }
+    compression: number
+    pointVel: { x: number; y: number; z: number }
+    pointVelAlongNormal: number
+    axle: 'front' | 'rear'
+    side: 'left' | 'right'
+  }> = []
+  let totalSupportCompression = 0
+  let totalSupportContact = 0
   let groundedWheels = 0
   let frontGroundedWheels = 0
-  let rearGroundedWheels = 0
-  let frontHeight = 0
   let frontHeightSamples = 0
-  let rearHeight = 0
-  let rearHeightSamples = 0
-  let leftHeight = 0
-  let leftHeightSamples = 0
-  let rightHeight = 0
-  let rightHeightSamples = 0
 
   for (let i = 0; i < contactPoints.length; i += 1) {
     const localPoint = contactPoints[i]
@@ -509,41 +575,44 @@ export const runVehicleDynamicsStep = ({
     const wheelZ = pos.z + offset.z
     const groundY = getDriveTerrainHeight(map, wheelX, wheelZ)
     const wheelDistance = wheelY - groundY
-    if (wheelDistance <= VEHICLE_PHYSICS.suspensionRideHeight + 0.08) {
+    if (!rampMap) {
+      const compression = Math.max(0, suspensionRestLength - wheelDistance)
+      if (compression > 0) {
+        const normal = sampleTerrainNormal(map, wheelX, wheelZ)
+        const pointVel = {
+          x: linVel.x + angVel.y * offset.z - angVel.z * offset.y,
+          y: linVel.y + angVel.z * offset.x - angVel.x * offset.z,
+          z: linVel.z + angVel.x * offset.y - angVel.y * offset.x,
+        }
+        supportContacts.push({
+          anchorWorld: { x: wheelX, y: wheelY, z: wheelZ },
+          normal,
+          compression,
+          pointVel,
+          pointVelAlongNormal: pointVel.x * normal.x + pointVel.y * normal.y + pointVel.z * normal.z,
+          axle: localPoint.axle,
+          side: localPoint.side,
+        })
+        totalSupportCompression += compression
+        totalSupportContact += Math.min(1, compression / 0.1)
+      }
+    }
+    if (wheelDistance <= wheelContactThreshold) {
       groundedWheels += 1
       if (localPoint.axle === 'front') {
         frontGroundedWheels += 1
-      } else {
-        rearGroundedWheels += 1
       }
     }
 
     if (localPoint.axle === 'front') {
-      frontHeight += groundY
       frontHeightSamples += 1
-    } else {
-      rearHeight += groundY
-      rearHeightSamples += 1
-    }
-    if (localPoint.side === 'left') {
-      leftHeight += groundY
-      leftHeightSamples += 1
-    } else {
-      rightHeight += groundY
-      rightHeightSamples += 1
     }
   }
 
-  frontHeight = frontHeightSamples > 0 ? frontHeight / frontHeightSamples : frontHeight
-  rearHeight = rearHeightSamples > 0 ? rearHeight / rearHeightSamples : rearHeight
-  leftHeight = leftHeightSamples > 0 ? leftHeight / leftHeightSamples : leftHeight
-  rightHeight = rightHeightSamples > 0 ? rightHeight / rightHeightSamples : rightHeight
   const contactRatio = groundedWheels / Math.max(1, contactPoints.length)
   const frontContactRatio = frontGroundedWheels / Math.max(1, frontHeightSamples)
-  const rearContactRatio = rearGroundedWheels / Math.max(1, rearHeightSamples)
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
-  const driveContactRatio = frontContactRatio * driveBiasFront + rearContactRatio * driveBiasRear
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
   const nowSec = performance.now() / 1000
   if (grounded) {
@@ -563,6 +632,182 @@ export const runVehicleDynamicsStep = ({
 
   const jumpState = grounded ? (jumpCooldownTimerRef.current > 0.001 ? 'cooldown' : 'grounded') : 'airborne'
 
+  if (rampMap && physicsMode !== 'four_wheel' && contactPoints.length > 0) {
+    const throttleRaw = driveCommand?.throttle ?? Number(input.forward) - Number(input.backward)
+    const turnDirection = driveCommand?.steer ?? Number(input.left) - Number(input.right)
+    const targetSteerAngle = turnDirection * VEHICLE_PHYSICS.maxSteerRad * vehiclePhysicsTuning.steeringMult
+    const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
+    steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
+
+    const frontPoints = contactPoints.filter((point) => point.axle === 'front')
+    const averagedFrontPoint =
+      frontPoints.length > 0
+        ? {
+            x: frontPoints.reduce((sum, point) => sum + point.x, 0) / frontPoints.length,
+            y: frontPoints.reduce((sum, point) => sum + point.y, 0) / frontPoints.length,
+            z: frontPoints.reduce((sum, point) => sum + point.z, 0) / frontPoints.length,
+          }
+        : contactPoints[0]
+    const wheelPoint = physicsMode === 'one_wheel' ? contactPoints[0] : averagedFrontPoint
+    const anchorOffset = rotateByQuat(wheelPoint, rotation)
+    const anchorWorld = {
+      x: pos.x + anchorOffset.x,
+      y: pos.y + anchorOffset.y,
+      z: pos.z + anchorOffset.z,
+    }
+    const wheelYaw = yaw + steerAngleRef.current
+    const wheelForward = { x: Math.sin(wheelYaw), y: 0, z: Math.cos(wheelYaw) }
+    const wheelRight = { x: Math.cos(wheelYaw), y: 0, z: -Math.sin(wheelYaw) }
+    const terrainY = getDriveTerrainHeight(map, anchorWorld.x, anchorWorld.z)
+    const restLength = VEHICLE_PHYSICS.suspensionRideHeight + 0.06
+    const suspensionLength = anchorWorld.y - terrainY
+    const compression = Math.max(0, restLength - suspensionLength)
+    const contact = Math.max(0, Math.min(1, compression / 0.1))
+    const mass = Math.max(0.8, body.mass())
+
+    const r = {
+      x: anchorWorld.x - pos.x,
+      y: anchorWorld.y - pos.y,
+      z: anchorWorld.z - pos.z,
+    }
+    const angCrossR = cross(angVel, r)
+    const pointVel = {
+      x: linVel.x + angCrossR.x,
+      y: linVel.y + angCrossR.y,
+      z: linVel.z + angCrossR.z,
+    }
+
+    const pointForwardSpeed = pointVel.x * wheelForward.x + pointVel.z * wheelForward.z
+    const pointLateralSpeed = pointVel.x * wheelRight.x + pointVel.z * wheelRight.z
+    const brake = Math.abs(throttleRaw) < 0.02 ? 0.12 : 0
+    const maxForwardSpeed = Math.max(30, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
+    const maxReverseSpeed = Math.max(10, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult)
+    const targetLongSpeed = throttleRaw >= 0 ? throttleRaw * maxForwardSpeed : throttleRaw * maxReverseSpeed
+    const speedError = targetLongSpeed - pointForwardSpeed
+    const modeDriveGain = physicsMode === 'two_wheel' ? 1.05 : 1
+
+    const springK = 380
+    const springD = 54
+    const springForce = Math.max(0, springK * compression - springD * pointVel.y) * contact
+    const tractionBase = Math.max(600, springForce + mass * 9.81 * 0.45)
+    const tractionLimit = tractionBase * surfaceConfig.gripFactor * vehiclePhysicsTuning.gripMult * 1.05
+    const rawDriveForce = speedError * mass * 5.4 * modeDriveGain
+    const driveForce = Math.max(-tractionLimit, Math.min(tractionLimit, rawDriveForce)) * contact
+    const brakeForce = -Math.sign(pointForwardSpeed || 1) * Math.abs(pointForwardSpeed) * brake * mass * 12 * contact
+    const rawLateralForce = -pointLateralSpeed * mass * 9.5
+    const lateralForce = Math.max(-tractionLimit * 0.9, Math.min(tractionLimit * 0.9, rawLateralForce)) * contact
+
+    const force = {
+      x: wheelForward.x * (driveForce + brakeForce) + wheelRight.x * lateralForce,
+      y: springForce,
+      z: wheelForward.z * (driveForce + brakeForce) + wheelRight.z * lateralForce,
+    }
+    const impulse = { x: force.x * delta, y: force.y * delta, z: force.z * delta }
+    body.applyImpulse(impulse, true)
+    const torqueImpulse = cross(r, impulse)
+    body.applyTorqueImpulse(torqueImpulse, true)
+
+    const sample = 1.2
+    const gx0 = getDriveTerrainHeight(map, anchorWorld.x - sample, anchorWorld.z)
+    const gx1 = getDriveTerrainHeight(map, anchorWorld.x + sample, anchorWorld.z)
+    const gz0 = getDriveTerrainHeight(map, anchorWorld.x, anchorWorld.z - sample)
+    const gz1 = getDriveTerrainHeight(map, anchorWorld.x, anchorWorld.z + sample)
+    let nx = gx0 - gx1
+    let ny = sample * 2
+    let nz = gz0 - gz1
+    const nLen = Math.hypot(nx, ny, nz) || 1
+    nx /= nLen
+    ny /= nLen
+    nz /= nLen
+    if (ny < 0) {
+      nx *= -1
+      ny *= -1
+      nz *= -1
+    }
+    let upX = 2 * (rotation.x * rotation.y - rotation.w * rotation.z)
+    let upY = 1 - 2 * (rotation.x * rotation.x + rotation.z * rotation.z)
+    let upZ = 2 * (rotation.y * rotation.z + rotation.w * rotation.x)
+    const upLen = Math.hypot(upX, upY, upZ) || 1
+    upX /= upLen
+    upY /= upLen
+    upZ /= upLen
+    const alignAxis = {
+      x: upY * nz - upZ * ny,
+      y: upZ * nx - upX * nz,
+      z: upX * ny - upY * nx,
+    }
+    body.applyTorqueImpulse(
+      {
+        x: (alignAxis.x * 0.14 - angVel.x * 0.2) * contact,
+        y: -angVel.y * 0.02,
+        z: (alignAxis.z * 0.14 - angVel.z * 0.2) * contact,
+      },
+      true,
+    )
+
+    const postVel = body.linvel()
+    const postAng = body.angvel()
+    body.setAngvel(
+      {
+        x: Math.max(-0.9, Math.min(0.9, postAng.x)),
+        y: postAng.y * Math.max(0, 1 - delta * 0.6),
+        z: Math.max(-0.9, Math.min(0.9, postAng.z)),
+      },
+      true,
+    )
+
+    telemetryTimerRef.current += delta
+    if (telemetryTimerRef.current >= 0.1) {
+      telemetryTimerRef.current = 0
+      const speedKph = Math.abs(postVel.x * forwardX + postVel.z * forwardZ) * 3.6
+      setTelemetry(speedKph, (steerAngleRef.current * 180) / Math.PI)
+      setPhysicsTelemetry({
+        speedKph,
+        steeringDeg: (steerAngleRef.current * 180) / Math.PI,
+        slipRatio: Math.min(1, Math.abs(pointLateralSpeed) / Math.max(0.1, Math.abs(pointForwardSpeed) + Math.abs(pointLateralSpeed))),
+        jumpState,
+        jumpCooldownRemaining: jumpCooldownTimerRef.current,
+        hardContactCount: hardContactCountRef.current,
+        nanGuardTrips: nanGuardTripsRef.current,
+        speedClampTrips: speedClampTripsRef.current,
+        rampContact: contact,
+        rampCompression: compression,
+        rampSpringForce: springForce,
+        rampDriveForce: driveForce,
+        rampLateralForce: lateralForce,
+        rampTractionLimit: tractionLimit,
+      })
+    }
+
+    const engineDirection = pointForwardSpeed > 0.35 ? 'forward' : pointForwardSpeed < -0.35 ? 'reverse' : 'idle'
+    updateEngineSound({
+      speed: Math.abs(pointForwardSpeed),
+      throttle: Math.abs(throttleRaw),
+      direction: engineDirection,
+      surface: onRoad ? 'road' : 'grass',
+      engineLoad: Math.min(1, Math.abs(throttleRaw) * 0.75 + Math.abs(pointLateralSpeed) * 0.12),
+      tone: vehiclePhysicsTuning.engineTone,
+    })
+
+    onPlayerPosition([pos.x, pos.y, pos.z])
+    lastYawRef.current = yaw
+    return {
+      pos: body.translation(),
+      yaw,
+      forwardX: Math.sin(yaw),
+      forwardZ: Math.cos(yaw),
+      nextVx: postVel.x,
+      nextVz: postVel.z,
+    }
+  }
+
+  let avgDriveForce = 0
+  let avgLateralForce = 0
+  let avgTractionLimit = 0
+  let avgSpringForce = 0
+  const avgSupportCompression = supportContacts.length > 0 ? totalSupportCompression / supportContacts.length : 0
+  const avgSupportContact = supportContacts.length > 0 ? totalSupportContact / supportContacts.length : 0
+
   const throttle = driveCommand?.throttle ?? Number(input.forward) - Number(input.backward)
   const criticalDamage = damage >= DAMAGE_DRIVE_EFFECTS.criticalThreshold
   if (criticalDamage) {
@@ -576,33 +821,14 @@ export const runVehicleDynamicsStep = ({
     sputterTimerRef.current = 0
   }
   const throttleFactor = sputterActiveRef.current && throttle > 0 ? DAMAGE_SPUTTER.throttleFactor : 1
-  const driveContact = driveContactRatio >= 0.24
+  const effectiveThrottle = throttle > 0 ? throttle * throttleFactor : throttle
 
   let nextForwardSpeed = forwardSpeed
   if (!Number.isFinite(nextForwardSpeed)) {
     nextForwardSpeed = 0
   }
 
-  const gripLerp = Math.min(
-    1,
-    delta *
-      (6.4 + Math.abs(nextForwardSpeed) * 0.45) *
-      gripScale *
-      surfaceConfig.gripFactor *
-      vehiclePhysicsTuning.gripMult *
-      (1 + (driveCommand ? (driveCommand.driveBiasFront - driveCommand.driveBiasRear) * 0.05 : 0)) *
-      (0.16 + contactRatio * 0.84),
-  )
-  const nextLateralSpeed = lateralSpeed * (1 - gripLerp)
-
   const turnDirection = driveCommand?.steer ?? Number(input.left) - Number(input.right)
-  const throttleForSteer = throttle * throttleFactor
-  const steerBaseSpeed =
-    Math.abs(nextForwardSpeed) > 0.5
-      ? nextForwardSpeed
-      : Math.abs(throttleForSteer) > 0.05
-        ? Math.sign(throttleForSteer || 1) * 1.8
-        : nextForwardSpeed
   const speedSteerScale = 1 - Math.min(0.62, Math.abs(nextForwardSpeed) / 16)
   const targetSteerAngle =
     turnDirection *
@@ -613,184 +839,231 @@ export const runVehicleDynamicsStep = ({
     (frontContactRatio > 0.05 ? Math.max(0.38, frontContactRatio) : 0)
   const steerBlend = Math.min(1, delta * VEHICLE_PHYSICS.steerResponse)
   steerAngleRef.current += (targetSteerAngle - steerAngleRef.current) * steerBlend
-  const reverseSteer = nextForwardSpeed < -0.15 ? 0.55 : 1
-  const targetYawRate =
-    ((steerBaseSpeed / (VEHICLE_PHYSICS.wheelBase * vehiclePhysicsTuning.wheelBase)) * Math.tan(steerAngleRef.current) * reverseSteer) /
-    Math.max(1, 0.55 + Math.abs(nextForwardSpeed) * 0.06)
-  const yawBlend = Math.min(1, delta * 10)
-  yawRateRef.current += (targetYawRate - yawRateRef.current) * yawBlend
-  let nextYaw = yaw + yawRateRef.current * delta
-
-  const yawDelta = Math.abs(normalizeAngleDelta(nextYaw - lastYawRef.current))
-  if (Math.abs(turnDirection) > 0 && Math.abs(nextForwardSpeed) > 2 && yawDelta < 0.0006) {
-    stuckSteerTimerRef.current += delta
-    if (stuckSteerTimerRef.current > 0.45) {
-      nextYaw += turnDirection * 0.006
-      yawRateRef.current = targetYawRate * 0.42
-      stuckSteerTimerRef.current = 0
-    }
-  } else {
-    stuckSteerTimerRef.current = Math.max(0, stuckSteerTimerRef.current - delta * 2)
-  }
-  const yawError = normalizeAngleDelta(nextYaw - yaw)
-  const yawRateError = targetYawRate - angVel.y
-  const normalSampleOffset = 1.24
-  let nx = leftHeight - rightHeight
-  let ny = normalSampleOffset * 2
-  let nz = rearHeight - frontHeight
-  const nMag = Math.hypot(nx, ny, nz) || 1
-  nx /= nMag
-  ny /= nMag
-  nz /= nMag
-  if (ny < 0) {
-    nx *= -1
-    ny *= -1
-    nz *= -1
-  }
-  let upX = 2 * (rotation.x * rotation.y - rotation.w * rotation.z)
-  let upY = 1 - 2 * (rotation.x * rotation.x + rotation.z * rotation.z)
-  let upZ = 2 * (rotation.y * rotation.z + rotation.w * rotation.x)
-  const upMag = Math.hypot(upX, upY, upZ) || 1
-  upX /= upMag
-  upY /= upMag
-  upZ /= upMag
-  const alignAxisX = upY * nz - upZ * ny
-  const alignAxisZ = upX * ny - upY * nx
-  const alignBlend = Math.max(0, Math.min(1, contactRatio))
-  const rollDamp = 1.05 + alignBlend * 0.5
-  const pitchDamp = 1.05 + alignBlend * 0.5
-  const torqueX = alignAxisX * 0.02 - angVel.x * rollDamp
-  const torqueY = (yawError * (0.42 + Math.abs(nextForwardSpeed) * 0.06) + yawRateError * 0.24) * (0.08 + alignBlend * 0.36)
-  const torqueZ = alignAxisZ * 0.02 - angVel.z * pitchDamp
-
-  const torqueControlAuthority = grounded ? 1 : Math.max(0, Math.min(1, (contactRatio - 0.12) / 0.4))
-  if (torqueControlAuthority > 0.001) {
+  yawRateRef.current = angVel.y
+  const nextYaw = yaw + yawRateRef.current * delta
+  stuckSteerTimerRef.current = 0
+  const supportNormal =
+    supportContacts.length > 0
+      ? normalize(
+          supportContacts.reduce(
+            (sum, contact) => ({
+              x: sum.x + contact.normal.x,
+              y: sum.y + contact.normal.y,
+              z: sum.z + contact.normal.z,
+            }),
+            { x: 0, y: 0, z: 0 },
+          ),
+          { x: 0, y: 1, z: 0 },
+        )
+      : { x: 0, y: 1, z: 0 }
+  const supportForward = normalize(
+    {
+      x: forwardX - supportNormal.x * dot({ x: forwardX, y: 0, z: forwardZ }, supportNormal),
+      y: -supportNormal.y * dot({ x: forwardX, y: 0, z: forwardZ }, supportNormal),
+      z: forwardZ - supportNormal.z * dot({ x: forwardX, y: 0, z: forwardZ }, supportNormal),
+    },
+    { x: forwardX, y: 0, z: forwardZ },
+  )
+  const supportRight = normalize(cross(supportNormal, supportForward), { x: rightX, y: 0, z: rightZ })
+  const bodyUp = normalize(
+    {
+      x: 2 * (rotation.x * rotation.y - rotation.w * rotation.z),
+      y: 1 - 2 * (rotation.x * rotation.x + rotation.z * rotation.z),
+      z: 2 * (rotation.y * rotation.z + rotation.w * rotation.x),
+    },
+    { x: 0, y: 1, z: 0 },
+  )
+  const tiltErrorAxis = cross(bodyUp, supportNormal)
+  const pitchRate = dot(angVel, supportRight)
+  const rollRate = dot(angVel, supportForward)
+  const normalYawRate = dot(angVel, supportNormal)
+  const dampingAuthority = grounded ? 1 : Math.max(0, Math.min(1, (contactRatio - 0.1) / 0.35))
+  if (dampingAuthority > 0.001) {
+    const pitchError = dot(tiltErrorAxis, supportRight)
+    const rollError = dot(tiltErrorAxis, supportForward)
+    const pitchRollAlign = 0.05 + avgSupportContact * 0.075
+    const pitchRollDamping = VEHICLE_PHYSICS.slopeAlignDamping * (0.14 + avgSupportContact * 0.12)
+    const yawDamping = 0.02 + avgSupportContact * 0.03
     body.applyTorqueImpulse(
       {
-        x: torqueX * torqueControlAuthority,
-        y: torqueY * torqueControlAuthority,
-        z: torqueZ * torqueControlAuthority,
-      },
-      true,
-    )
-  } else {
-    // In air / no-contact, only damp angular velocity; do not inject control torque.
-    body.setAngvel(
-      {
-        x: angVel.x * Math.max(0, 1 - delta * 4.2),
-        y: angVel.y * Math.max(0, 1 - delta * 2.4),
-        z: angVel.z * Math.max(0, 1 - delta * 4.2),
+        x:
+          (supportRight.x * (pitchError * pitchRollAlign - pitchRate * pitchRollDamping) +
+            supportForward.x * (rollError * pitchRollAlign - rollRate * pitchRollDamping) -
+            supportNormal.x * normalYawRate * yawDamping) *
+          dampingAuthority,
+        y:
+          (supportRight.y * (pitchError * pitchRollAlign - pitchRate * pitchRollDamping) +
+            supportForward.y * (rollError * pitchRollAlign - rollRate * pitchRollDamping) -
+            supportNormal.y * normalYawRate * yawDamping) *
+          dampingAuthority,
+        z:
+          (supportRight.z * (pitchError * pitchRollAlign - pitchRate * pitchRollDamping) +
+            supportForward.z * (rollError * pitchRollAlign - rollRate * pitchRollDamping) -
+            supportNormal.z * normalYawRate * yawDamping) *
+          dampingAuthority,
       },
       true,
     )
   }
+  const maxForwardSpeed = Math.max(rampMap ? 34 : 18, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
+  const maxReverseSpeed = Math.max(rampMap ? 12 : 6.2, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult * 1.1)
+  if (supportContacts.length > 0) {
+    const maxSupportImpulse = VEHICLE_PHYSICS.suspensionImpulseClamp * delta
+    const frontSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'front').length)
+    const rearSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'rear').length)
+    const supportMassShare = driveMass / Math.max(1, supportContacts.length)
+    let totalDriveForce = 0
+    let totalLateralForce = 0
+    let totalTractionForce = 0
+    let totalSpring = 0
+
+    for (const contact of supportContacts) {
+      const springForce = Math.max(
+        0,
+        contact.compression * VEHICLE_PHYSICS.suspensionSpring -
+          contact.pointVelAlongNormal * VEHICLE_PHYSICS.suspensionDamping,
+      )
+      const supportImpulseMag = Math.min(maxSupportImpulse, springForce * delta)
+      if (supportImpulseMag > 1e-5) {
+        body.applyImpulseAtPoint(
+          {
+            x: contact.normal.x * supportImpulseMag,
+            y: contact.normal.y * supportImpulseMag,
+            z: contact.normal.z * supportImpulseMag,
+          },
+          contact.anchorWorld,
+          true,
+        )
+      }
+      totalSpring += springForce
+
+      const wheelYaw = yaw + (contact.axle === 'front' ? steerAngleRef.current : 0)
+      const wheelForwardBase = { x: Math.sin(wheelYaw), y: 0, z: Math.cos(wheelYaw) }
+      const wheelForward = normalize(
+        {
+          x: wheelForwardBase.x - contact.normal.x * dot(wheelForwardBase, contact.normal),
+          y: wheelForwardBase.y - contact.normal.y * dot(wheelForwardBase, contact.normal),
+          z: wheelForwardBase.z - contact.normal.z * dot(wheelForwardBase, contact.normal),
+        },
+        { x: forwardX, y: 0, z: forwardZ },
+      )
+      const wheelRight = normalize(cross(contact.normal, wheelForward), { x: rightX, y: 0, z: rightZ })
+      const pointForwardSpeed = dot(contact.pointVel, wheelForward)
+      const pointLateralSpeed = dot(contact.pointVel, wheelRight)
+      const contactMassShare =
+        contact.axle === 'front'
+          ? (driveMass * driveBiasFront) / frontSupportCount
+          : (driveMass * driveBiasRear) / rearSupportCount
+
+      let longitudinalImpulse = 0
+      if (effectiveThrottle > 0.02 && pointForwardSpeed < maxForwardSpeed) {
+        const driveDv = surfaceConfig.forwardAcceleration * vehiclePhysicsTuning.accelMult * effectiveThrottle * delta
+        longitudinalImpulse += Math.max(0, Math.min(maxForwardSpeed - pointForwardSpeed, driveDv)) * Math.max(0.18, contactMassShare)
+      } else if (effectiveThrottle < -0.02 && pointForwardSpeed > -maxReverseSpeed) {
+        const reverseDv = surfaceConfig.reverseAcceleration * vehiclePhysicsTuning.reverseSpeedMult * -effectiveThrottle * delta
+        longitudinalImpulse -= Math.max(0, Math.min(pointForwardSpeed + maxReverseSpeed, reverseDv)) * Math.max(0.18, contactMassShare)
+      }
+
+      if (Math.abs(effectiveThrottle) <= 0.02) {
+        const coastAccel =
+          VEHICLE_PHYSICS.engineBrake * (driveCommand?.engineBrakeMult ?? 1) +
+          VEHICLE_PHYSICS.rollingResistance +
+          Math.abs(pointForwardSpeed) * VEHICLE_PHYSICS.aeroDrag
+        const coastDv = Math.min(Math.abs(pointForwardSpeed), coastAccel * delta)
+        longitudinalImpulse -= Math.sign(pointForwardSpeed || 1) * coastDv * supportMassShare
+      } else if (pointForwardSpeed * effectiveThrottle < -0.05) {
+        const brakeAccel = (effectiveThrottle < 0 ? VEHICLE_PHYSICS.reverseBrakeDecel : VEHICLE_PHYSICS.brakeDecel) * vehiclePhysicsTuning.brakeMult
+        const brakeDv = Math.min(Math.abs(pointForwardSpeed), brakeAccel * delta)
+        longitudinalImpulse -= Math.sign(pointForwardSpeed || 1) * brakeDv * supportMassShare
+      }
+
+      const lateralResponse = Math.min(
+        1,
+        delta * (6.8 + Math.abs(pointForwardSpeed) * 0.75) * surfaceConfig.gripFactor * gripScale * vehiclePhysicsTuning.gripMult,
+      )
+      let lateralImpulse = -pointLateralSpeed * supportMassShare * lateralResponse
+      const tractionLimit = supportImpulseMag * (6.6 + surfaceConfig.gripFactor * 2.4) * gripScale * vehiclePhysicsTuning.gripMult
+      const tangentialImpulseMag = Math.hypot(longitudinalImpulse, lateralImpulse)
+      if (tangentialImpulseMag > tractionLimit && tractionLimit > 1e-5) {
+        const tangentialScale = tractionLimit / tangentialImpulseMag
+        longitudinalImpulse *= tangentialScale
+        lateralImpulse *= tangentialScale
+      }
+
+      if (Math.abs(longitudinalImpulse) > 1e-5 || Math.abs(lateralImpulse) > 1e-5) {
+        body.applyImpulseAtPoint(
+          {
+            x: wheelForward.x * longitudinalImpulse + wheelRight.x * lateralImpulse,
+            y: wheelForward.y * longitudinalImpulse + wheelRight.y * lateralImpulse,
+            z: wheelForward.z * longitudinalImpulse + wheelRight.z * lateralImpulse,
+          },
+          contact.anchorWorld,
+          true,
+        )
+      }
+
+      totalDriveForce += longitudinalImpulse / Math.max(delta, 1e-5)
+      totalLateralForce += lateralImpulse / Math.max(delta, 1e-5)
+      totalTractionForce += tractionLimit / Math.max(delta, 1e-5)
+    }
+
+    avgDriveForce = totalDriveForce / supportContacts.length
+    avgLateralForce = totalLateralForce / supportContacts.length
+    avgTractionLimit = totalTractionForce / supportContacts.length
+    avgSpringForce = totalSpring / supportContacts.length
+  }
+
+  const postDriveVel = body.linvel()
+  const maxRampUpVel = Math.max(JUMP_TUNING.maxUpliftSpeed, 6.8)
+  if (rampMap && postDriveVel.y > maxRampUpVel) {
+    body.setLinvel({ x: postDriveVel.x, y: maxRampUpVel, z: postDriveVel.z }, true)
+  }
+  if (dampingAuthority > 0.001) {
+    const postAng = body.angvel()
+    const pitchRate = dot(postAng, supportRight)
+    const rollRate = dot(postAng, supportForward)
+    const yawRate = dot(postAng, supportNormal)
+    const pitchRollRateLimit = grounded ? 0.92 + avgSupportContact * 0.18 : 1.4
+    const clampedPitchRate = Math.max(-pitchRollRateLimit, Math.min(pitchRollRateLimit, pitchRate))
+    const clampedRollRate = Math.max(-pitchRollRateLimit, Math.min(pitchRollRateLimit, rollRate))
+    if (clampedPitchRate !== pitchRate || clampedRollRate !== rollRate) {
+      body.setAngvel(
+        {
+          x: supportRight.x * clampedPitchRate + supportForward.x * clampedRollRate + supportNormal.x * yawRate,
+          y: supportRight.y * clampedPitchRate + supportForward.y * clampedRollRate + supportNormal.y * yawRate,
+          z: supportRight.z * clampedPitchRate + supportForward.z * clampedRollRate + supportNormal.z * yawRate,
+        },
+        true,
+      )
+    }
+  }
+
+  const postVel = body.linvel()
+  const postForwardSpeed = postVel.x * forwardX + postVel.z * forwardZ
+  const postLateralSpeed = postVel.x * rightX + postVel.z * rightZ
   telemetryTimerRef.current += delta
   if (telemetryTimerRef.current >= 0.1) {
     telemetryTimerRef.current = 0
-    setTelemetry(Math.abs(nextForwardSpeed) * 3.6, (steerAngleRef.current * 180) / Math.PI)
+    const speedKph = Math.abs(postForwardSpeed) * 3.6
+    setTelemetry(speedKph, (steerAngleRef.current * 180) / Math.PI)
     setPhysicsTelemetry({
-      speedKph: Math.abs(nextForwardSpeed) * 3.6,
+      speedKph,
       steeringDeg: (steerAngleRef.current * 180) / Math.PI,
-      slipRatio: Math.min(1, Math.abs(nextLateralSpeed) / Math.max(0.1, Math.abs(nextForwardSpeed) + Math.abs(nextLateralSpeed))),
+      slipRatio: Math.min(1, Math.abs(postLateralSpeed) / Math.max(0.1, Math.abs(postForwardSpeed) + Math.abs(postLateralSpeed))),
       jumpState,
       jumpCooldownRemaining: jumpCooldownTimerRef.current,
       hardContactCount: hardContactCountRef.current,
       nanGuardTrips: nanGuardTripsRef.current,
       speedClampTrips: speedClampTripsRef.current,
+      rampContact: avgSupportContact,
+      rampCompression: avgSupportCompression,
+      rampSpringForce: avgSpringForce,
+      rampDriveForce: avgDriveForce,
+      rampLateralForce: avgLateralForce,
+      rampTractionLimit: avgTractionLimit,
     })
   }
 
-  onPlayerPosition([pos.x, pos.y, pos.z])
-  lastYawRef.current = nextYaw
-  const throttleEffective = throttleForSteer
-  const moveForwardX = Math.sin(nextYaw)
-  const moveForwardZ = Math.cos(nextYaw)
-  const maxForwardSpeed = Math.max(18, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
-  const maxReverseSpeed = Math.max(6.2, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult * 1.1)
-  const propulsionContact = (grounded || coyoteActive || contactRatio >= 0.2) && Math.abs(linVel.y) <= 1.2
-  if (propulsionContact && Math.abs(throttleEffective) > 0.02) {
-    const assistTargetSpeed = throttleEffective > 0 ? throttleEffective * maxForwardSpeed : throttleEffective * maxReverseSpeed
-    const speedError = assistTargetSpeed - forwardSpeed
-    const assistTraction = Math.max(0.23, Math.min(1, contactRatio * 0.9))
-    const assistDv = Math.max(-4.6, Math.min(4.6, speedError)) * Math.min(1, delta * 4.3) * assistTraction
-    const launchBoost =
-      Math.abs(forwardSpeed) < 2.6
-        ? throttleEffective * driveMass * Math.min(1, delta * 6.4) * assistTraction * 0.18
-        : 0
-    const forwardAssistImpulse = assistDv * driveMass * 0.55 + launchBoost
-    body.applyImpulse(
-      {
-        x: moveForwardX * forwardAssistImpulse,
-        y: 0,
-        z: moveForwardZ * forwardAssistImpulse,
-      },
-      true,
-    )
-    if (Math.abs(turnDirection) > 0.03) {
-      const yawAssist = turnDirection * Math.min(0.12, 0.045 + Math.abs(forwardSpeed) * 0.008) * Math.min(1, delta * 5)
-      body.applyTorqueImpulse({ x: 0, y: yawAssist, z: 0 }, true)
-    }
-  }
-  const downforce = Math.abs(nextForwardSpeed) * (driveContact ? 0.6 : 0.38) * driveMass * delta
-  if (downforce > 0.0001) {
-    body.applyImpulse({ x: 0, y: -downforce, z: 0 }, true)
-  }
-  const postDriveVel = body.linvel()
-  const slopeClimbFactor = Math.max(0, Math.min(1, (1 - ny) / 0.42))
-  const maxGroundedUpVel = 0.26 + slopeClimbFactor * 1.22
-  const maxAirUpVel = 0.1
-  const maxAllowedUpVel = contactRatio >= 0.42 ? maxGroundedUpVel : maxAirUpVel
-  const noJump = SAFETY_LOCK.disableJump || !input.jump
-  if (postDriveVel.y > maxAllowedUpVel) {
-    body.setLinvel({ x: postDriveVel.x, y: maxAllowedUpVel, z: postDriveVel.z }, true)
-  }
-  const throttleAbs = Math.abs(throttle * throttleFactor)
-  const antiLiftActive = throttleAbs > 0.05 && !input.jump && contactRatio >= DRIVE_ANTI_LIFT.minContactRatio
-  const antiLiftUpClamp = DRIVE_ANTI_LIFT.upVelClamp + slopeClimbFactor * 0.7
-  if (antiLiftActive && postDriveVel.y > antiLiftUpClamp) {
-    body.setLinvel(
-      {
-        x: postDriveVel.x,
-        y: antiLiftUpClamp,
-        z: postDriveVel.z,
-      },
-      true,
-    )
-    body.applyImpulse({ x: 0, y: -driveMass * DRIVE_ANTI_LIFT.downBiasImpulse * delta, z: 0 }, true)
-  }
-  if (postDriveVel.y > JUMP_TUNING.maxUpliftSpeed) {
-    body.setLinvel({ x: postDriveVel.x, y: JUMP_TUNING.maxUpliftSpeed, z: postDriveVel.z }, true)
-  }
-  let postAng = body.angvel()
-  if (noJump) {
-    body.setAngvel(
-      {
-        x: 0,
-        y: postAng.y,
-        z: 0,
-      },
-      true,
-    )
-    postAng = body.angvel()
-  }
-  if (noJump && contactRatio < 0.15) {
-    body.setAngvel(
-      {
-        x: 0,
-        y: postAng.y * Math.max(0, 1 - delta * 1.8),
-        z: 0,
-      },
-      true,
-    )
-    postAng = body.angvel()
-  }
-  const clampedAngX = Math.max(-3.2, Math.min(3.2, postAng.x))
-  const clampedAngZ = Math.max(-3.2, Math.min(3.2, postAng.z))
-  if (clampedAngX !== postAng.x || clampedAngZ !== postAng.z) {
-    body.setAngvel({ x: clampedAngX, y: postAng.y, z: clampedAngZ }, true)
-  }
-
-  const postVel = body.linvel()
   if (hardContactCountRef.current > 0 && Math.abs(nextForwardSpeed) > 2) {
     scrapeDamageTimerRef.current += delta
     if (scrapeDamageTimerRef.current >= 0.72) {
@@ -809,20 +1082,23 @@ export const runVehicleDynamicsStep = ({
     scrapeDamageTimerRef.current = 0
   }
 
-  const engineDirection = nextForwardSpeed > 0.35 ? 'forward' : nextForwardSpeed < -0.35 ? 'reverse' : 'idle'
-  const lateralLoad = Math.min(1, Math.abs(nextLateralSpeed) / 2.4)
+  const engineDirection = postForwardSpeed > 0.35 ? 'forward' : postForwardSpeed < -0.35 ? 'reverse' : 'idle'
+  const lateralLoad = Math.min(1, Math.abs(postLateralSpeed) / 2.4)
   const engineLoad = Math.min(1, damageRatio * 0.55 + lateralLoad * 0.35 + (onRoad ? 0 : 0.2))
   updateEngineSound({
-    speed: Math.abs(nextForwardSpeed),
-    throttle: Math.abs(throttle * throttleFactor),
+    speed: Math.abs(postForwardSpeed),
+    throttle: Math.abs(effectiveThrottle),
     direction: engineDirection,
     surface: onRoad ? 'road' : 'grass',
     engineLoad,
     tone: vehiclePhysicsTuning.engineTone,
   })
 
+  const finalPos = body.translation()
+  onPlayerPosition([finalPos.x, finalPos.y, finalPos.z])
+  lastYawRef.current = nextYaw
   return {
-    pos: body.translation(),
+    pos: finalPos,
     yaw: nextYaw,
     forwardX: Math.sin(nextYaw),
     forwardZ: Math.cos(nextYaw),
