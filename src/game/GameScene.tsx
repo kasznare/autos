@@ -31,6 +31,8 @@ import { useRenderProfiler } from './scene/useRenderProfiler'
 import type { QualityConfig, QualityTier } from './systems'
 import { useGameStore } from './store'
 
+const TEST_MAP_IDS = new Set(['test-flat', 'test-slope', 'test-curve'])
+
 const PlayerShadowRig = ({
   playerPositionRef,
   enabled,
@@ -146,6 +148,7 @@ export const GameScene = ({
 
   const map = useMemo(() => getTrackMap(selectedMapId, proceduralMapSeed), [selectedMapId, proceduralMapSeed])
   const rampDebugMap = map.sourceId === 'ramp'
+  const sparseTestMap = TEST_MAP_IDS.has(map.sourceId)
   const activeStaticObstacles = useMemo(() => map.spawnRules.obstacles.static, [map])
   const activeMovableObstacles = useMemo(() => map.spawnRules.obstacles.movable, [map])
   const mapSpawnObstacles = useMemo(
@@ -243,13 +246,13 @@ export const GameScene = ({
           <PathLaneMarkers map={map} />
         </>
       ) : null}
-      {rampDebugMap ? null : (
+      {rampDebugMap || sparseTestMap ? null : (
         <RoadsideDetails map={map} seed={proceduralMapSeed * 97 + restartToken * 31} density={qualityConfig.roadsideDensity} castShadows={qualityTier === 'high'} />
       )}
-      {rampDebugMap ? null : <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />}
+      {rampDebugMap || sparseTestMap ? null : <Trees trees={map.trees} map={map} castShadows={qualityTier === 'high'} />}
       <MapEnvironment objects={map.environmentObjects} restartToken={restartToken} />
       <MapInteractables map={map} restartToken={restartToken} />
-      {map.shape === 'path' && map.sourceId !== 'ramp' ? (
+      {map.shape === 'path' && map.sourceId !== 'ramp' && !sparseTestMap ? (
         <TrafficCars map={map} lowPowerMode={lowPowerMode} restartToken={restartToken} playerPositionRef={playerPositionRef} updateHz={qualityConfig.trafficUpdateHz} />
       ) : null}
       {activeStaticObstacles.map((obstacle) => (

@@ -4,7 +4,15 @@ export const MAP_SCHEMA_VERSION = '3.0.0' as const
 
 export type MapSchemaVersion = typeof MAP_SCHEMA_VERSION
 
-export type MapId = 'orbital' | 'gaia' | 'titan' | 'ramp' | 'procedural'
+export type MapId =
+  | 'orbital'
+  | 'gaia'
+  | 'titan'
+  | 'ramp'
+  | 'procedural'
+  | 'test-flat'
+  | 'test-slope'
+  | 'test-curve'
 export type MapShape = 'ring' | 'path'
 export type SurfaceMaterial = 'asphalt' | 'regolith' | 'ice' | 'basalt' | 'dust'
 export type TerrainProfile = 'flat' | 'rolling' | 'craggy'

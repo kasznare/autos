@@ -104,7 +104,83 @@ const rampPickups = [
   { id: 'ramp-p-2', position: [-2.2, 12.8, 52] as [number, number, number], type: 'part' as const },
 ]
 
-export const MAP_ORDER: MapId[] = ['orbital', 'gaia', 'titan', 'procedural']
+const createStraightRunPath = (halfSpan: number, halfLength: number): TrackPoint[] => [
+  [-halfSpan, -halfLength],
+  [-halfSpan, halfLength],
+  [halfSpan, halfLength],
+  [halfSpan, -halfLength],
+]
+
+const createEllipsePath = (radiusX: number, radiusZ: number, count: number): TrackPoint[] =>
+  Array.from({ length: count }, (_, idx) => {
+    const angle = -Math.PI / 2 + (idx / count) * Math.PI * 2
+    return [Math.cos(angle) * radiusX, Math.sin(angle) * radiusZ] as TrackPoint
+  })
+
+const createTestingSpawnRules = (): TrackMap['spawnRules'] => ({
+  pickups: {
+    initial: [],
+    minCounts: { star: 0, repair: 0, part: 0 },
+    bonusRepairChance: 0,
+    bonusPartChance: 0,
+  },
+  hazards: {
+    critters: {
+      enabled: false,
+      count: 0,
+      breakSpeed: 3,
+      hitRadius: 1.05,
+      hitCheckInterval: 0.08,
+      respawnSeconds: 4,
+    },
+    destructibles: {
+      initialCount: 0,
+      spawnPoints: [],
+      breakSpeed: 6,
+      respawnSeconds: 4,
+      palette: ['#d39d58'],
+    },
+  },
+  obstacles: {
+    static: [],
+    movable: [],
+  },
+})
+
+const createStraightRunGates = (
+  x: number,
+  zPositions: number[],
+  yAt: (z: number) => number = () => 0,
+) =>
+  zPositions.map((z) => ({
+    position: [x, yAt(z), z] as [number, number, number],
+  }))
+
+const createGuidePosts = (
+  prefix: string,
+  leftX: number,
+  rightX: number,
+  zPositions: number[],
+  height = 4.8,
+): MapInteractable[] =>
+  zPositions.flatMap((z, idx) => [
+    createInteractable(`${prefix}-left-${idx + 1}`, 'tower', [leftX, height * 0.5, z], [0.75, height, 0.75], '#f3f0e7', 'hard', 'none'),
+    createInteractable(`${prefix}-right-${idx + 1}`, 'tower', [rightX, height * 0.5, z], [0.75, height, 0.75], '#f3f0e7', 'hard', 'none'),
+  ])
+
+const testFlatPath = createStraightRunPath(9, 124)
+const testSlopePath = createStraightRunPath(9, 124)
+const testCurvePath = createEllipsePath(60, 44, 20)
+
+export const getTestSlopeHeight = (worldHalf: number, amplitude: number, z: number) => {
+  const climbRange = Math.max(1, worldHalf - 12)
+  const inclineT = Math.max(-1, Math.min(1, z / climbRange))
+  return inclineT * amplitude
+}
+
+const testSlopeGateHeight = (z: number) => getTestSlopeHeight(132, 10, z)
+
+export const MAP_ORDER: MapId[] = ['orbital', 'gaia', 'titan', 'procedural', 'test-flat', 'test-slope', 'test-curve']
 
 export const MAP_LABELS: Record<MapId, string> = {
   orbital: 'Orbital Rift',
@@ -112,6 +188,9 @@ export const MAP_LABELS: Record<MapId, string> = {
   titan: 'Titan Brakefield',
   ramp: 'Sky Ramp',
   procedural: 'Nebula Loop',
+  'test-flat': 'Flat Lab',
+  'test-slope': 'Slope Lab',
+  'test-curve': 'Curve Lab',
 }
 
 export const FIXED_MAPS: Record<Exclude<MapId, 'procedural'>, TrackMap> = {
@@ -477,6 +556,128 @@ export const FIXED_MAPS: Record<Exclude<MapId, 'procedural'>, TrackMap> = {
       createEnvironment('ramp-sun', 'sun', [74, 86, -44], 8.8, '#ffe0a3'),
       createEnvironment('ramp-cloud-a', 'cloud', [-32, 58, -66], 1.55, '#eff8ff', 0.5),
       createEnvironment('ramp-cloud-b', 'cloud', [36, 54, 52], 1.42, '#eff8ff', 0.42),
+    ],
+  },
+  'test-flat': {
+    schemaVersion: '3.0.0',
+    id: 'test-flat',
+    sourceId: 'test-flat',
+    label: MAP_LABELS['test-flat'],
+    shape: 'path',
+    worldHalf: 132,
+    outerHalf: 0,
+    innerHalf: 0,
+    roadWidth: 12,
+    laneCount: 2,
+    laneWidth: 6,
+    detailDensity: 0.7,
+    roadPath: testFlatPath,
+    startPosition: [-9, 0.38, -108],
+    startYaw: 0,
+    gravity: [0, -9.8, 0],
+    terrain: {
+      profile: 'flat',
+      amplitude: 0,
+      frequency: 0.01,
+    },
+    materialZones: [
+      { id: 'global-basalt', shape: 'global', material: 'basalt' },
+      { id: 'test-flat-track', shape: 'path-band', material: 'asphalt', width: 13.2 },
+    ],
+    materialTuning: {
+      asphalt: { tractionMultiplier: 1, dragMultiplier: 1, topSpeedMultiplier: 1 },
+      basalt: { tractionMultiplier: 0.88, dragMultiplier: 1.08, topSpeedMultiplier: 0.96 },
+    },
+    spawnRules: createTestingSpawnRules(),
+    gates: createStraightRunGates(-9, [-80, -36, 8, 52]),
+    trees: [],
+    interactables: createGuidePosts('test-flat-guide', -24, 6, [-92, -48, -4, 40, 84]),
+    environmentObjects: [
+      createEnvironment('test-flat-sun', 'sun', [72, 82, -36], 8.6, '#ffe19e'),
+      createEnvironment('test-flat-cloud', 'cloud', [-18, 56, -74], 1.35, '#f1f8ff', 0.24),
+    ],
+  },
+  'test-slope': {
+    schemaVersion: '3.0.0',
+    id: 'test-slope',
+    sourceId: 'test-slope',
+    label: MAP_LABELS['test-slope'],
+    shape: 'path',
+    worldHalf: 132,
+    outerHalf: 0,
+    innerHalf: 0,
+    roadWidth: 12,
+    laneCount: 2,
+    laneWidth: 6,
+    detailDensity: 0.7,
+    roadPath: testSlopePath,
+    startPosition: [-9, 0.38, -108],
+    startYaw: 0,
+    gravity: [0, -9.8, 0],
+    terrain: {
+      profile: 'flat',
+      amplitude: 10,
+      frequency: 0.01,
+    },
+    materialZones: [
+      { id: 'global-basalt', shape: 'global', material: 'basalt' },
+      { id: 'test-slope-track', shape: 'path-band', material: 'asphalt', width: 13.2 },
+    ],
+    materialTuning: {
+      asphalt: { tractionMultiplier: 1, dragMultiplier: 1, topSpeedMultiplier: 1 },
+      basalt: { tractionMultiplier: 0.88, dragMultiplier: 1.08, topSpeedMultiplier: 0.96 },
+    },
+    spawnRules: createTestingSpawnRules(),
+    gates: createStraightRunGates(-9, [-80, -36, 8, 52], testSlopeGateHeight),
+    trees: [],
+    interactables: createGuidePosts('test-slope-guide', -24, 6, [-92, -48, -4, 40, 84]),
+    environmentObjects: [
+      createEnvironment('test-slope-sun', 'sun', [72, 82, -36], 8.6, '#ffe19e'),
+      createEnvironment('test-slope-cloud', 'cloud', [24, 58, 68], 1.3, '#eef7ff', 0.22),
+    ],
+  },
+  'test-curve': {
+    schemaVersion: '3.0.0',
+    id: 'test-curve',
+    sourceId: 'test-curve',
+    label: MAP_LABELS['test-curve'],
+    shape: 'path',
+    worldHalf: 96,
+    outerHalf: 0,
+    innerHalf: 0,
+    roadWidth: 12,
+    laneCount: 2,
+    laneWidth: 6,
+    detailDensity: 0.7,
+    roadPath: testCurvePath,
+    startPosition: [0, 0.38, -44],
+    startYaw: Math.PI / 2,
+    gravity: [0, -9.8, 0],
+    terrain: {
+      profile: 'flat',
+      amplitude: 0,
+      frequency: 0.01,
+    },
+    materialZones: [
+      { id: 'global-basalt', shape: 'global', material: 'basalt' },
+      { id: 'test-curve-track', shape: 'path-band', material: 'asphalt', width: 13.2 },
+    ],
+    materialTuning: {
+      asphalt: { tractionMultiplier: 1, dragMultiplier: 1, topSpeedMultiplier: 1 },
+      basalt: { tractionMultiplier: 0.88, dragMultiplier: 1.08, topSpeedMultiplier: 0.96 },
+    },
+    spawnRules: createTestingSpawnRules(),
+    gates: [
+      { position: [28, 0, -34], rotation: [0, 2.06, 0] },
+      { position: [58, 0, 0], rotation: [0, Math.PI, 0] },
+      { position: [28, 0, 34], rotation: [0, -2.06, 0] },
+      { position: [-28, 0, 34], rotation: [0, -1.08, 0] },
+    ],
+    trees: [],
+    interactables: [],
+    environmentObjects: [
+      createEnvironment('test-curve-sun', 'sun', [58, 76, -48], 8.2, '#ffd998'),
+      createEnvironment('test-curve-cloud', 'cloud', [-36, 52, 22], 1.28, '#f1f8ff', 0.24),
     ],
   },
 }

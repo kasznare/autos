@@ -1,5 +1,5 @@
 import type { DestructibleProp } from '../types'
-import { FIXED_MAPS } from './data'
+import { FIXED_MAPS, getTestSlopeHeight } from './data'
 import type { MapId, MaterialTuning, SurfaceMaterial, TrackMap, TrackPoint } from './schema'
 import { assertMapConfigs } from './validate'
 
@@ -137,6 +137,9 @@ export const sampleTerrainHeight = (map: TrackMap, x: number, z: number) => {
     const climbRange = Math.max(1, map.worldHalf - 8)
     const inclineT = Math.max(-1, Math.min(1, z / climbRange))
     return inclineT * map.terrain.amplitude
+  }
+  if (map.sourceId === 'test-slope') {
+    return getTestSlopeHeight(map.worldHalf, map.terrain.amplitude, z)
   }
   if (map.terrain.amplitude <= 0) {
     return 0
