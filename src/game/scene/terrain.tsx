@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier'
-import { useEffect, useMemo, useRef } from 'react'
-import { BackSide, CanvasTexture, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, Vector3 } from 'three'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { BackSide, CanvasTexture, InstancedMesh, MeshStandardMaterial, Object3D, PlaneGeometry, RepeatWrapping, Vector3 } from 'three'
 import { Wireframe } from '@react-three/drei'
 import { TRACK_SIZE } from '../config'
 import { isPointNearRoad, sampleTerrainHeight, type TrackMap } from '../maps'
@@ -29,6 +29,24 @@ const resolveNearLod = (distance: number, threshold: number, hysteresis: number,
 const pseudoNoise = (index: number, salt: number) => {
   const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453
   return x - Math.floor(x)
+}
+
+const applyInstanceTransforms = <T,>(
+  mesh: InstancedMesh | null,
+  items: readonly T[],
+  applyTransform: (dummy: Object3D, item: T) => void,
+) => {
+  if (!mesh) {
+    return
+  }
+  const dummy = new Object3D()
+  items.forEach((item, idx) => {
+    applyTransform(dummy, item)
+    dummy.updateMatrix()
+    mesh.setMatrixAt(idx, dummy.matrix)
+  })
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.computeBoundingSphere()
 }
 
 export const Ground = ({ worldHalf = TRACK_SIZE / 2 }: { worldHalf?: number }) => {
@@ -679,38 +697,73 @@ export const Trees = ({
   trees: { id: string; position: [number, number, number]; scale: number; variant: 'round' | 'cone' }[]
   map: TrackMap
   castShadows?: boolean
-}) => (
-  <group>
-    {trees.map((tree) => (
-      <RigidBody
-        key={tree.id}
-        type="fixed"
-        colliders={false}
-        name={`hard-tree-${tree.id}`}
-        position={[tree.position[0], sampleTerrainHeight(map, tree.position[0], tree.position[2]), tree.position[2]]}
-      >
-        <group scale={tree.scale}>
-          <mesh castShadow={castShadows} position={[0, 0.7, 0]}>
-            <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
-            <meshStandardMaterial color="#6f4a25" roughness={0.9} />
-          </mesh>
-          {tree.variant === 'round' ? (
-            <mesh castShadow={castShadows} position={[0, 1.75, 0]}>
-              <sphereGeometry args={[0.7, 12, 12]} />
-              <meshStandardMaterial color="#3d8f49" roughness={0.85} />
-            </mesh>
-          ) : (
-            <mesh castShadow={castShadows} position={[0, 1.8, 0]}>
-              <coneGeometry args={[0.74, 1.35, 12]} />
-              <meshStandardMaterial color="#3f944d" roughness={0.85} />
-            </mesh>
-          )}
-        </group>
-        <CuboidCollider args={[0.12 * tree.scale, 0.7 * tree.scale, 0.12 * tree.scale]} position={[0, 0.7 * tree.scale, 0]} />
-      </RigidBody>
-    ))}
-  </group>
-)
+}) => {
+  const trunkRef = useRef<InstancedMesh>(null)
+  const roundRef = useRef<InstancedMesh>(null)
+  const coneRef = useRef<InstancedMesh>(null)
+  const treeInstances = useMemo(
+    () =>
+      trees.map((tree) => ({
+        ...tree,
+        groundY: sampleTerrainHeight(map, tree.position[0], tree.position[2]),
+      })),
+    [map, trees],
+  )
+  const roundTrees = useMemo(() => treeInstances.filter((tree) => tree.variant === 'round'), [treeInstances])
+  const coneTrees = useMemo(() => treeInstances.filter((tree) => tree.variant === 'cone'), [treeInstances])
+
+  useLayoutEffect(() => {
+    applyInstanceTransforms(trunkRef.current, treeInstances, (dummy, tree) => {
+      dummy.position.set(tree.position[0], tree.groundY + 0.7 * tree.scale, tree.position[2])
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(tree.scale)
+    })
+    applyInstanceTransforms(roundRef.current, roundTrees, (dummy, tree) => {
+      dummy.position.set(tree.position[0], tree.groundY + 1.75 * tree.scale, tree.position[2])
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(tree.scale)
+    })
+    applyInstanceTransforms(coneRef.current, coneTrees, (dummy, tree) => {
+      dummy.position.set(tree.position[0], tree.groundY + 1.8 * tree.scale, tree.position[2])
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(tree.scale)
+    })
+  }, [coneTrees, roundTrees, treeInstances])
+
+  return (
+    <group>
+      {treeInstances.length > 0 ? (
+        <instancedMesh ref={trunkRef} args={[undefined, undefined, treeInstances.length]} castShadow={castShadows}>
+          <cylinderGeometry args={[0.12, 0.17, 1.4, 8]} />
+          <meshStandardMaterial color="#6f4a25" roughness={0.9} />
+        </instancedMesh>
+      ) : null}
+      {roundTrees.length > 0 ? (
+        <instancedMesh ref={roundRef} args={[undefined, undefined, roundTrees.length]} castShadow={castShadows}>
+          <sphereGeometry args={[0.7, 12, 12]} />
+          <meshStandardMaterial color="#3d8f49" roughness={0.85} />
+        </instancedMesh>
+      ) : null}
+      {coneTrees.length > 0 ? (
+        <instancedMesh ref={coneRef} args={[undefined, undefined, coneTrees.length]} castShadow={castShadows}>
+          <coneGeometry args={[0.74, 1.35, 12]} />
+          <meshStandardMaterial color="#3f944d" roughness={0.85} />
+        </instancedMesh>
+      ) : null}
+      {treeInstances.map((tree) => (
+        <RigidBody
+          key={tree.id}
+          type="fixed"
+          colliders={false}
+          name={`hard-tree-${tree.id}`}
+          position={[tree.position[0], tree.groundY, tree.position[2]]}
+        >
+          <CuboidCollider args={[0.12 * tree.scale, 0.7 * tree.scale, 0.12 * tree.scale]} position={[0, 0.7 * tree.scale, 0]} />
+        </RigidBody>
+      ))}
+    </group>
+  )
+}
 
 export const RoadsideDetails = ({
   map,
@@ -751,22 +804,38 @@ export const RoadsideDetails = ({
     }
     return out
   }, [density, map, seed])
+  const rockRef = useRef<InstancedMesh>(null)
+  const bushRef = useRef<InstancedMesh>(null)
+  const rocks = useMemo(() => details.filter((item) => item.type === 'rock'), [details])
+  const bushes = useMemo(() => details.filter((item) => item.type === 'bush'), [details])
+
+  useLayoutEffect(() => {
+    applyInstanceTransforms(rockRef.current, rocks, (dummy, item) => {
+      dummy.position.set(item.position[0], item.position[1], item.position[2])
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(item.scale)
+    })
+    applyInstanceTransforms(bushRef.current, bushes, (dummy, item) => {
+      dummy.position.set(item.position[0], item.position[1], item.position[2])
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(item.scale)
+    })
+  }, [bushes, rocks])
 
   return (
     <group>
-      {details.map((item) =>
-        item.type === 'rock' ? (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows} receiveShadow={castShadows}>
-            <dodecahedronGeometry args={[0.35, 0]} />
-            <meshStandardMaterial color="#7c8374" roughness={0.93} />
-          </mesh>
-        ) : (
-          <mesh key={item.id} position={item.position} scale={item.scale} castShadow={castShadows}>
-            <sphereGeometry args={[0.42, 8, 7]} />
-            <meshStandardMaterial color="#4d9f58" roughness={0.88} />
-          </mesh>
-        ),
-      )}
+      {rocks.length > 0 ? (
+        <instancedMesh ref={rockRef} args={[undefined, undefined, rocks.length]} castShadow={castShadows} receiveShadow={castShadows}>
+          <dodecahedronGeometry args={[0.35, 0]} />
+          <meshStandardMaterial color="#7c8374" roughness={0.93} />
+        </instancedMesh>
+      ) : null}
+      {bushes.length > 0 ? (
+        <instancedMesh ref={bushRef} args={[undefined, undefined, bushes.length]} castShadow={castShadows}>
+          <sphereGeometry args={[0.42, 8, 7]} />
+          <meshStandardMaterial color="#4d9f58" roughness={0.88} />
+        </instancedMesh>
+      ) : null}
     </group>
   )
 }
