@@ -6,7 +6,9 @@ import { updateEngineSound } from '../../sfx'
 import type { DriveInputState } from '../../keys'
 import type { Pickup, VehiclePhysicsTuning } from '../../types'
 import type { DriveCommand } from '../../vehicle/drivetrain'
+import type { WheelActuationRuntimeSample } from '../../vehicle/integration'
 import type { VehiclePhysicsMode } from '../../store/types'
+import type { VehicleMotionMode } from '../../store/types'
 
 type MutableRef<T> = { current: T }
 
@@ -21,6 +23,7 @@ type TelemetryFns = {
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
+    motionMode?: 'legacy-chassis' | 'native-rig'
     rampContact?: number
     rampCompression?: number
     rampSpringForce?: number
@@ -383,6 +386,7 @@ type DynamicsParams = {
     hardContactCount?: number
     nanGuardTrips?: number
     speedClampTrips?: number
+    motionMode?: 'legacy-chassis' | 'native-rig'
     rampContact?: number
     rampCompression?: number
     rampSpringForce?: number
@@ -396,7 +400,15 @@ type DynamicsParams = {
   getImpactLabel: (material: 'rubber' | 'wood' | 'metal' | 'rock' | 'glass', tier: 'minor' | 'moderate' | 'major' | 'critical', scrape?: boolean) => string
   driveCommand?: DriveCommand
   wheelContactPoints?: readonly DynamicsWheelContactPoint[]
+  wheelActuationRuntime?: {
+    frontContactAuthority: number
+    rearContactAuthority: number
+    frontSurfaceGrip: number
+    rearSurfaceGrip: number
+    wheelSamples?: readonly WheelActuationRuntimeSample[]
+  }
   physicsMode?: VehiclePhysicsMode
+  motionMode?: VehicleMotionMode
   telemetryTimerRef: MutableRef<number>
 }
 
@@ -511,7 +523,9 @@ export const runVehicleDynamicsStep = ({
   getImpactLabel,
   driveCommand,
   wheelContactPoints,
+  wheelActuationRuntime,
   physicsMode = 'four_wheel',
+  motionMode = 'legacy-chassis',
   telemetryTimerRef,
 }: DynamicsParams) => {
   const pos = body.translation()
@@ -560,57 +574,108 @@ export const runVehicleDynamicsStep = ({
     pointVelAlongNormal: number
     axle: 'front' | 'rear'
     side: 'left' | 'right'
+    contactAuthority: number
+    surfaceGrip: number
   }> = []
   let totalSupportCompression = 0
   let totalSupportContact = 0
   let groundedWheels = 0
   let frontGroundedWheels = 0
   let frontHeightSamples = 0
+  const nativeWheelSamples = motionMode === 'native-rig' ? wheelActuationRuntime?.wheelSamples ?? [] : []
 
-  for (let i = 0; i < contactPoints.length; i += 1) {
-    const localPoint = contactPoints[i]
-    const offset = rotateByQuat(localPoint, rotation)
-    const wheelX = pos.x + offset.x
-    const wheelY = pos.y + offset.y
-    const wheelZ = pos.z + offset.z
-    const groundY = getDriveTerrainHeight(map, wheelX, wheelZ)
-    const wheelDistance = wheelY - groundY
-    if (!rampMap) {
-      const compression = Math.max(0, suspensionRestLength - wheelDistance)
-      if (compression > 0) {
-        const normal = sampleTerrainNormal(map, wheelX, wheelZ)
-        const pointVel = {
-          x: linVel.x + angVel.y * offset.z - angVel.z * offset.y,
-          y: linVel.y + angVel.z * offset.x - angVel.x * offset.z,
-          z: linVel.z + angVel.x * offset.y - angVel.y * offset.x,
-        }
+  if (nativeWheelSamples.length > 0) {
+    for (const sample of nativeWheelSamples) {
+      const offset = {
+        x: sample.anchorWorld.x - pos.x,
+        y: sample.anchorWorld.y - pos.y,
+        z: sample.anchorWorld.z - pos.z,
+      }
+      const pointVel = {
+        x: linVel.x + angVel.y * offset.z - angVel.z * offset.y,
+        y: linVel.y + angVel.z * offset.x - angVel.x * offset.z,
+        z: linVel.z + angVel.x * offset.y - angVel.y * offset.x,
+      }
+      if (!rampMap && sample.compression > 0.001) {
         supportContacts.push({
-          anchorWorld: { x: wheelX, y: wheelY, z: wheelZ },
-          normal,
-          compression,
+          anchorWorld: sample.anchorWorld,
+          normal: sample.normal,
+          compression: sample.compression,
           pointVel,
-          pointVelAlongNormal: pointVel.x * normal.x + pointVel.y * normal.y + pointVel.z * normal.z,
-          axle: localPoint.axle,
-          side: localPoint.side,
+          pointVelAlongNormal: pointVel.x * sample.normal.x + pointVel.y * sample.normal.y + pointVel.z * sample.normal.z,
+          axle: sample.axle,
+          side: sample.side,
+          contactAuthority: sample.contactAuthority,
+          surfaceGrip: sample.surfaceGrip,
         })
-        totalSupportCompression += compression
-        totalSupportContact += Math.min(1, compression / 0.1)
+        totalSupportCompression += sample.compression
+        totalSupportContact += sample.contactAuthority
+      }
+      if (sample.contactAuthority > 0.08) {
+        groundedWheels += 1
+        if (sample.axle === 'front') {
+          frontGroundedWheels += 1
+        }
+      }
+      if (sample.axle === 'front') {
+        frontHeightSamples += 1
       }
     }
-    if (wheelDistance <= wheelContactThreshold) {
-      groundedWheels += 1
-      if (localPoint.axle === 'front') {
-        frontGroundedWheels += 1
+  } else {
+    for (let i = 0; i < contactPoints.length; i += 1) {
+      const localPoint = contactPoints[i]
+      const offset = rotateByQuat(localPoint, rotation)
+      const wheelX = pos.x + offset.x
+      const wheelY = pos.y + offset.y
+      const wheelZ = pos.z + offset.z
+      const groundY = getDriveTerrainHeight(map, wheelX, wheelZ)
+      const wheelDistance = wheelY - groundY
+      if (!rampMap) {
+        const compression = Math.max(0, suspensionRestLength - wheelDistance)
+        if (compression > 0) {
+          const normal = sampleTerrainNormal(map, wheelX, wheelZ)
+          const pointVel = {
+            x: linVel.x + angVel.y * offset.z - angVel.z * offset.y,
+            y: linVel.y + angVel.z * offset.x - angVel.x * offset.z,
+            z: linVel.z + angVel.x * offset.y - angVel.y * offset.x,
+          }
+          supportContacts.push({
+            anchorWorld: { x: wheelX, y: wheelY, z: wheelZ },
+            normal,
+            compression,
+            pointVel,
+            pointVelAlongNormal: pointVel.x * normal.x + pointVel.y * normal.y + pointVel.z * normal.z,
+            axle: localPoint.axle,
+            side: localPoint.side,
+            contactAuthority: Math.min(1, compression / 0.1),
+            surfaceGrip: 1,
+          })
+          totalSupportCompression += compression
+          totalSupportContact += Math.min(1, compression / 0.1)
+        }
       }
-    }
+      if (wheelDistance <= wheelContactThreshold) {
+        groundedWheels += 1
+        if (localPoint.axle === 'front') {
+          frontGroundedWheels += 1
+        }
+      }
 
-    if (localPoint.axle === 'front') {
-      frontHeightSamples += 1
+      if (localPoint.axle === 'front') {
+        frontHeightSamples += 1
+      }
     }
   }
 
   const contactRatio = groundedWheels / Math.max(1, contactPoints.length)
   const frontContactRatio = frontGroundedWheels / Math.max(1, frontHeightSamples)
+  const frontWheelContactAuthority = wheelActuationRuntime?.frontContactAuthority ?? frontContactRatio
+  const rearWheelContactAuthority = wheelActuationRuntime?.rearContactAuthority ?? contactRatio
+  const frontWheelSurfaceGrip = wheelActuationRuntime?.frontSurfaceGrip ?? 1
+  const rearWheelSurfaceGrip = wheelActuationRuntime?.rearSurfaceGrip ?? 1
+  const nativeRigSpringScale = motionMode === 'native-rig' ? 1.12 : 1
+  const nativeRigAntiRollScale = motionMode === 'native-rig' ? 1.28 : 1
+  const nativeRigAlignScale = motionMode === 'native-rig' ? 1.22 : 1
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
@@ -632,7 +697,7 @@ export const runVehicleDynamicsStep = ({
 
   const jumpState = grounded ? (jumpCooldownTimerRef.current > 0.001 ? 'cooldown' : 'grounded') : 'airborne'
 
-  if (rampMap && physicsMode !== 'four_wheel' && contactPoints.length > 0) {
+  if (rampMap && motionMode !== 'native-rig' && physicsMode !== 'four_wheel' && contactPoints.length > 0) {
     const throttleRaw = driveCommand?.throttle ?? Number(input.forward) - Number(input.backward)
     const turnDirection = driveCommand?.steer ?? Number(input.left) - Number(input.right)
     const targetSteerAngle = turnDirection * VEHICLE_PHYSICS.maxSteerRad * vehiclePhysicsTuning.steeringMult
@@ -770,6 +835,7 @@ export const runVehicleDynamicsStep = ({
         hardContactCount: hardContactCountRef.current,
         nanGuardTrips: nanGuardTripsRef.current,
         speedClampTrips: speedClampTripsRef.current,
+        motionMode: motionMode ?? 'legacy-chassis',
         rampContact: contact,
         rampCompression: compression,
         rampSpringForce: springForce,
@@ -882,8 +948,8 @@ export const runVehicleDynamicsStep = ({
   if (dampingAuthority > 0.001) {
     const pitchError = dot(tiltErrorAxis, supportRight)
     const rollError = dot(tiltErrorAxis, supportForward)
-    const pitchRollAlign = 0.05 + avgSupportContact * 0.075
-    const pitchRollDamping = VEHICLE_PHYSICS.slopeAlignDamping * (0.14 + avgSupportContact * 0.12)
+    const pitchRollAlign = (0.05 + avgSupportContact * 0.075) * nativeRigAlignScale
+    const pitchRollDamping = VEHICLE_PHYSICS.slopeAlignDamping * (0.14 + avgSupportContact * 0.12) * nativeRigAlignScale
     const yawDamping = 0.02 + avgSupportContact * 0.03
     body.applyTorqueImpulse(
       {
@@ -914,7 +980,7 @@ export const runVehicleDynamicsStep = ({
     const rearSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'rear').length)
     const supportMassShare = driveMass / Math.max(1, supportContacts.length)
     const antiRollImpulses = new Array(supportContacts.length).fill(0)
-    const maxAntiRollImpulse = maxSupportImpulse * 0.65
+    const maxAntiRollImpulse = maxSupportImpulse * 0.65 * nativeRigAntiRollScale
 
     for (const axle of ['front', 'rear'] as const) {
       const leftIndex = supportContacts.findIndex((contact) => contact.axle === axle && contact.side === 'left')
@@ -927,7 +993,8 @@ export const runVehicleDynamicsStep = ({
       const compressionDelta = leftContact.compression - rightContact.compression
       const velocityDelta = leftContact.pointVelAlongNormal - rightContact.pointVelAlongNormal
       const antiRollForce =
-        compressionDelta * VEHICLE_PHYSICS.antiRollStiffness - velocityDelta * VEHICLE_PHYSICS.antiRollDamping
+        compressionDelta * VEHICLE_PHYSICS.antiRollStiffness * nativeRigAntiRollScale -
+        velocityDelta * VEHICLE_PHYSICS.antiRollDamping * nativeRigAntiRollScale
       const antiRollImpulse = Math.max(-maxAntiRollImpulse, Math.min(maxAntiRollImpulse, antiRollForce * delta))
       antiRollImpulses[leftIndex] += antiRollImpulse
       antiRollImpulses[rightIndex] -= antiRollImpulse
@@ -943,7 +1010,7 @@ export const runVehicleDynamicsStep = ({
         0,
         contact.compression * VEHICLE_PHYSICS.suspensionSpring -
           contact.pointVelAlongNormal * VEHICLE_PHYSICS.suspensionDamping,
-      )
+      ) * nativeRigSpringScale
       const supportImpulseMag = Math.min(maxSupportImpulse, springForce * delta)
       if (supportImpulseMag > 1e-5) {
         body.applyImpulseAtPoint(
@@ -983,10 +1050,14 @@ export const runVehicleDynamicsStep = ({
       const wheelRight = normalize(cross(contact.normal, wheelForward), { x: rightX, y: 0, z: rightZ })
       const pointForwardSpeed = dot(contact.pointVel, wheelForward)
       const pointLateralSpeed = dot(contact.pointVel, wheelRight)
+      const axleContactAuthority = contact.axle === 'front' ? frontWheelContactAuthority : rearWheelContactAuthority
+      const axleSurfaceGrip = contact.axle === 'front' ? frontWheelSurfaceGrip : rearWheelSurfaceGrip
+      const contactAuthority = motionMode === 'native-rig' ? contact.contactAuthority : axleContactAuthority
+      const surfaceGrip = motionMode === 'native-rig' ? contact.surfaceGrip : axleSurfaceGrip
       const contactMassShare =
         contact.axle === 'front'
-          ? (driveMass * driveBiasFront) / frontSupportCount
-          : (driveMass * driveBiasRear) / rearSupportCount
+          ? ((driveMass * driveBiasFront) / frontSupportCount) * contactAuthority
+          : ((driveMass * driveBiasRear) / rearSupportCount) * contactAuthority
 
       let longitudinalImpulse = 0
       if (effectiveThrottle > 0.02 && pointForwardSpeed < maxForwardSpeed) {
@@ -1012,11 +1083,21 @@ export const runVehicleDynamicsStep = ({
 
       const lateralResponse = Math.min(
         1,
-        delta * (6.8 + Math.abs(pointForwardSpeed) * 0.75) * surfaceConfig.gripFactor * gripScale * vehiclePhysicsTuning.gripMult,
+        delta *
+          (6.8 + Math.abs(pointForwardSpeed) * 0.75) *
+          surfaceConfig.gripFactor *
+          surfaceGrip *
+          gripScale *
+          vehiclePhysicsTuning.gripMult,
       )
       let lateralImpulse = -pointLateralSpeed * supportMassShare * lateralResponse
       const loadedSupportImpulse = Math.max(0, supportImpulseMag + antiRollImpulse)
-      const tractionLimit = loadedSupportImpulse * (6.6 + surfaceConfig.gripFactor * 2.4) * gripScale * vehiclePhysicsTuning.gripMult
+      const tractionLimit =
+        loadedSupportImpulse *
+        (6.6 + surfaceConfig.gripFactor * 2.4) *
+        surfaceGrip *
+        gripScale *
+        vehiclePhysicsTuning.gripMult
       const tangentialImpulseMag = Math.hypot(longitudinalImpulse, lateralImpulse)
       if (tangentialImpulseMag > tractionLimit && tractionLimit > 1e-5) {
         const tangentialScale = tractionLimit / tangentialImpulseMag
@@ -1089,6 +1170,7 @@ export const runVehicleDynamicsStep = ({
       hardContactCount: hardContactCountRef.current,
       nanGuardTrips: nanGuardTripsRef.current,
       speedClampTrips: speedClampTripsRef.current,
+      motionMode: motionMode ?? 'legacy-chassis',
       rampContact: avgSupportContact,
       rampCompression: avgSupportCompression,
       rampSpringForce: avgSpringForce,
