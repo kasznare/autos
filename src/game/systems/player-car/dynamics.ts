@@ -12,6 +12,9 @@ import type { VehicleMotionMode } from '../../store/types'
 import {
   NATIVE_RIG_ALIGN_SCALE,
   NATIVE_RIG_ANTIROLL_SCALE,
+  NATIVE_RIG_DRIVE_SHARE_FLOOR,
+  NATIVE_RIG_LATERAL_RESPONSE_SCALE,
+  NATIVE_RIG_OVERSPEED_BRAKE_SCALE,
   NATIVE_RIG_SPRING_SCALE,
   NATIVE_RIG_SUPPORT_FORCE_SCALE,
 } from './constants'
@@ -683,6 +686,9 @@ export const runVehicleDynamicsStep = ({
   const nativeRigAntiRollScale = motionMode === 'native-rig' ? NATIVE_RIG_ANTIROLL_SCALE : 1
   const nativeRigAlignScale = motionMode === 'native-rig' ? NATIVE_RIG_ALIGN_SCALE : 1
   const nativeRigSupportForceScale = motionMode === 'native-rig' ? NATIVE_RIG_SUPPORT_FORCE_SCALE : 1
+  const nativeRigDriveShareFloor = motionMode === 'native-rig' ? NATIVE_RIG_DRIVE_SHARE_FLOOR : 0.18
+  const nativeRigOverspeedBrakeScale = motionMode === 'native-rig' ? NATIVE_RIG_OVERSPEED_BRAKE_SCALE : 0
+  const nativeRigLateralResponseScale = motionMode === 'native-rig' ? NATIVE_RIG_LATERAL_RESPONSE_SCALE : 1
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
@@ -979,8 +985,14 @@ export const runVehicleDynamicsStep = ({
       true,
     )
   }
-  const maxForwardSpeed = Math.max(rampMap ? 34 : 18, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
-  const maxReverseSpeed = Math.max(rampMap ? 12 : 6.2, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult * 1.1)
+  const maxForwardSpeed =
+    motionMode === 'native-rig'
+      ? Math.max(rampMap ? 24 : 12, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult * 0.92)
+      : Math.max(rampMap ? 34 : 18, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
+  const maxReverseSpeed =
+    motionMode === 'native-rig'
+      ? Math.max(rampMap ? 8 : 4.8, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult)
+      : Math.max(rampMap ? 12 : 6.2, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult * 1.1)
   if (supportContacts.length > 0) {
     const maxSupportImpulse = VEHICLE_PHYSICS.suspensionImpulseClamp * nativeRigSupportForceScale * delta
     const frontSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'front').length)
@@ -1069,10 +1081,17 @@ export const runVehicleDynamicsStep = ({
       let longitudinalImpulse = 0
       if (effectiveThrottle > 0.02 && pointForwardSpeed < maxForwardSpeed) {
         const driveDv = surfaceConfig.forwardAcceleration * vehiclePhysicsTuning.accelMult * effectiveThrottle * delta
-        longitudinalImpulse += Math.max(0, Math.min(maxForwardSpeed - pointForwardSpeed, driveDv)) * Math.max(0.18, contactMassShare)
+        longitudinalImpulse +=
+          Math.max(0, Math.min(maxForwardSpeed - pointForwardSpeed, driveDv)) * Math.max(nativeRigDriveShareFloor, contactMassShare)
       } else if (effectiveThrottle < -0.02 && pointForwardSpeed > -maxReverseSpeed) {
         const reverseDv = surfaceConfig.reverseAcceleration * vehiclePhysicsTuning.reverseSpeedMult * -effectiveThrottle * delta
-        longitudinalImpulse -= Math.max(0, Math.min(pointForwardSpeed + maxReverseSpeed, reverseDv)) * Math.max(0.18, contactMassShare)
+        longitudinalImpulse -=
+          Math.max(0, Math.min(pointForwardSpeed + maxReverseSpeed, reverseDv)) * Math.max(nativeRigDriveShareFloor, contactMassShare)
+      }
+
+      if (nativeRigOverspeedBrakeScale > 0 && pointForwardSpeed > maxForwardSpeed) {
+        longitudinalImpulse -=
+          Math.min(pointForwardSpeed - maxForwardSpeed, nativeRigOverspeedBrakeScale * delta) * Math.max(nativeRigDriveShareFloor, contactMassShare)
       }
 
       if (Math.abs(effectiveThrottle) <= 0.02) {
@@ -1095,7 +1114,8 @@ export const runVehicleDynamicsStep = ({
           surfaceConfig.gripFactor *
           surfaceGrip *
           gripScale *
-          vehiclePhysicsTuning.gripMult,
+          vehiclePhysicsTuning.gripMult *
+          nativeRigLateralResponseScale,
       )
       let lateralImpulse = -pointLateralSpeed * supportMassShare * lateralResponse
       const loadedSupportImpulse = Math.max(0, supportImpulseMag + antiRollImpulse)
@@ -1139,6 +1159,24 @@ export const runVehicleDynamicsStep = ({
   const maxRampUpVel = Math.max(JUMP_TUNING.maxUpliftSpeed, 6.8)
   if (rampMap && postDriveVel.y > maxRampUpVel) {
     body.setLinvel({ x: postDriveVel.x, y: maxRampUpVel, z: postDriveVel.z }, true)
+  }
+  if (motionMode === 'native-rig' && supportContacts.length > 0) {
+    const rawPostVel = body.linvel()
+    const rawPostForwardSpeed = rawPostVel.x * forwardX + rawPostVel.z * forwardZ
+    const rawPostLateralSpeed = rawPostVel.x * rightX + rawPostVel.z * rightZ
+    const clampedForwardSpeed = Math.max(-maxReverseSpeed * 1.02, Math.min(maxForwardSpeed, rawPostForwardSpeed))
+    const lateralSpeedLimit = Math.max(3.8, Math.abs(clampedForwardSpeed) * 0.34 + 1.1)
+    const clampedLateralSpeed = Math.max(-lateralSpeedLimit, Math.min(lateralSpeedLimit, rawPostLateralSpeed))
+    if (clampedForwardSpeed !== rawPostForwardSpeed || clampedLateralSpeed !== rawPostLateralSpeed) {
+      body.setLinvel(
+        {
+          x: forwardX * clampedForwardSpeed + rightX * clampedLateralSpeed,
+          y: rawPostVel.y,
+          z: forwardZ * clampedForwardSpeed + rightZ * clampedLateralSpeed,
+        },
+        true,
+      )
+    }
   }
   if (dampingAuthority > 0.001) {
     const postAng = body.angvel()

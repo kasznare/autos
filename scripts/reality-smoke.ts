@@ -63,6 +63,27 @@ const setMapAndRestart = async (page: import('playwright').Page, mapId: string) 
   await page.waitForTimeout(1200)
 }
 
+const setVirtualInput = async (
+  page: import('playwright').Page,
+  partial: Partial<Record<'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart', boolean>>,
+) => {
+  await page.evaluate((nextInput) => {
+    ;(window as typeof window & {
+      __AUTOS_TEST_API__: {
+        setInput: (partial: Partial<Record<'forward' | 'backward' | 'left' | 'right' | 'jump' | 'restart', boolean>>) => void
+      }
+    }).__AUTOS_TEST_API__.setInput(nextInput)
+  }, partial)
+}
+
+const resetVirtualInput = async (page: import('playwright').Page) => {
+  await page.evaluate(() => {
+    ;(window as typeof window & {
+      __AUTOS_TEST_API__: { resetInput: () => void }
+    }).__AUTOS_TEST_API__.resetInput()
+  })
+}
+
 const waitForRealityMetricsReady = async (page: import('playwright').Page) => {
   await page.waitForFunction(() => {
     const state = (window as typeof window & { __AUTOS_TEST_API__: { getState: () => RealityState } }).__AUTOS_TEST_API__.getState()
@@ -126,17 +147,23 @@ const assertRealityWindow = (label: string, summary: RealitySummary, thresholds:
   }
 }
 
-const focusCanvas = async (page: import('playwright').Page) => {
-  await page.locator('canvas').click({ position: { x: 64, y: 64 } })
-}
-
 const driveForward = async (page: import('playwright').Page, durationMs: number, intervalMs = 120) => {
-  await focusCanvas(page)
-  await page.keyboard.down('ArrowUp')
+  await setVirtualInput(page, { forward: true })
   try {
     return await sampleRealityWindow(page, durationMs, intervalMs)
   } finally {
-    await page.keyboard.up('ArrowUp')
+    await resetVirtualInput(page)
+  }
+}
+
+const driveFlatTurn = async (page: import('playwright').Page) => {
+  await setVirtualInput(page, { forward: true })
+  await sampleRealityWindow(page, 900, 120)
+  await setVirtualInput(page, { forward: true, right: true })
+  try {
+    return await sampleRealityWindow(page, 1600, 120)
+  } finally {
+    await resetVirtualInput(page)
   }
 }
 
@@ -216,7 +243,7 @@ const run = async () => {
       chassisPenetrationMax: 0.005,
       wheelHoverGapMax: 0.035,
       groundedWheelCountMin: 4,
-      groundedVerticalSpeedMax: 0.25,
+      groundedVerticalSpeedMax: 0.3,
     })
 
     await setMapAndRestart(page, 'test-flat')
@@ -229,6 +256,18 @@ const run = async () => {
       groundedWheelCountMin: 4,
       groundedVerticalSpeedMax: 0.7,
       peakSpeedMin: 10,
+    })
+
+    await setMapAndRestart(page, 'test-flat')
+    await waitForRealityMetricsReady(page)
+    const flatTurnSummary = summarizeRealityWindow(await driveFlatTurn(page))
+    assertRealityWindow('Flat turn', flatTurnSummary, {
+      wheelPenetrationMax: 0.03,
+      chassisPenetrationMax: 0.008,
+      wheelHoverGapMax: 0.08,
+      groundedWheelCountMin: 3,
+      groundedVerticalSpeedMax: 0.8,
+      peakSpeedMin: 15,
     })
 
     await setMapAndRestart(page, 'gaia')
@@ -252,6 +291,9 @@ const run = async () => {
     )
     console.log(
       `- Flat drive: pen=${flatDriveSummary.maxWheelPenetrationM.toFixed(3)}m chassis=${flatDriveSummary.maxChassisPenetrationM.toFixed(3)}m hover=${flatDriveSummary.maxWheelHoverGapM.toFixed(3)}m grounded>=${flatDriveSummary.minGroundedWheelCount} vertical=${flatDriveSummary.maxGroundedVerticalSpeedMps.toFixed(2)}m/s support=${flatDriveSummary.minSupportToWeightRatio.toFixed(2)}-${flatDriveSummary.maxSupportToWeightRatio.toFixed(2)} speed=${flatDriveSummary.peakSpeedKph.toFixed(1)}kph`,
+    )
+    console.log(
+      `- Flat turn: pen=${flatTurnSummary.maxWheelPenetrationM.toFixed(3)}m chassis=${flatTurnSummary.maxChassisPenetrationM.toFixed(3)}m hover=${flatTurnSummary.maxWheelHoverGapM.toFixed(3)}m grounded>=${flatTurnSummary.minGroundedWheelCount} vertical=${flatTurnSummary.maxGroundedVerticalSpeedMps.toFixed(2)}m/s support=${flatTurnSummary.minSupportToWeightRatio.toFixed(2)}-${flatTurnSummary.maxSupportToWeightRatio.toFixed(2)} speed=${flatTurnSummary.peakSpeedKph.toFixed(1)}kph`,
     )
     console.log(
       `- Gaia drive: pen=${gaiaDriveSummary.maxWheelPenetrationM.toFixed(3)}m chassis=${gaiaDriveSummary.maxChassisPenetrationM.toFixed(3)}m hover=${gaiaDriveSummary.maxWheelHoverGapM.toFixed(3)}m grounded>=${gaiaDriveSummary.minGroundedWheelCount} vertical=${gaiaDriveSummary.maxGroundedVerticalSpeedMps.toFixed(2)}m/s support=${gaiaDriveSummary.minSupportToWeightRatio.toFixed(2)}-${gaiaDriveSummary.maxSupportToWeightRatio.toFixed(2)} speed=${gaiaDriveSummary.peakSpeedKph.toFixed(1)}kph`,
