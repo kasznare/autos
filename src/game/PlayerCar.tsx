@@ -62,6 +62,7 @@ const DEFAULT_DEBUG_WHEEL_POSITIONS: Array<[number, number, number]> = [
 ]
 
 const NATIVE_RIG_SPAWN_COMPRESSION_RATIO = 0.48
+const NATIVE_RIG_GRAVITY_SCALE = 1.45
 
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody>(null!)
@@ -326,6 +327,14 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   useEffect(() => {
     wheelBodyRefs.current.length = rigCorners.length
   }, [rigCorners.length])
+
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) {
+      return
+    }
+    body.setGravityScale(useNativeRigMotion ? NATIVE_RIG_GRAVITY_SCALE : 1, true)
+  }, [useNativeRigMotion])
 
   // Emergency stabilization mode: wheel rigidbodies are decoupled from chassis physics.
 

@@ -673,9 +673,9 @@ export const runVehicleDynamicsStep = ({
   const rearWheelContactAuthority = wheelActuationRuntime?.rearContactAuthority ?? contactRatio
   const frontWheelSurfaceGrip = wheelActuationRuntime?.frontSurfaceGrip ?? 1
   const rearWheelSurfaceGrip = wheelActuationRuntime?.rearSurfaceGrip ?? 1
-  const nativeRigSpringScale = motionMode === 'native-rig' ? 1.12 : 1
-  const nativeRigAntiRollScale = motionMode === 'native-rig' ? 1.28 : 1
-  const nativeRigAlignScale = motionMode === 'native-rig' ? 1.22 : 1
+  const nativeRigSpringScale = motionMode === 'native-rig' ? 0.96 : 1
+  const nativeRigAntiRollScale = motionMode === 'native-rig' ? 1.08 : 1
+  const nativeRigAlignScale = motionMode === 'native-rig' ? 0.94 : 1
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
