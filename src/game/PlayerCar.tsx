@@ -998,7 +998,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
           crackOpacity={crackOpacity}
           renderMode={renderMode}
           wireframe={renderWireframe}
-          physicsDebugView
+          physicsDebugView={renderMode === 'flat-debug'}
           oneWheelDebugView={oneWheelModel}
           frontLeftSteerRad={visualWheelState.frontLeftSteer}
           frontRightSteerRad={visualWheelState.frontRightSteer}
