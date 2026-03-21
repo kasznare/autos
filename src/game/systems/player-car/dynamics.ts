@@ -13,6 +13,9 @@ import {
   NATIVE_RIG_ALIGN_SCALE,
   NATIVE_RIG_ANTIROLL_SCALE,
   NATIVE_RIG_DRIVE_SHARE_FLOOR,
+  NATIVE_RIG_GROUNDED_ANGULAR_DAMPING,
+  NATIVE_RIG_GROUNDED_LATERAL_DAMPING,
+  NATIVE_RIG_GROUNDED_VERTICAL_DAMPING,
   NATIVE_RIG_LATERAL_RESPONSE_SCALE,
   NATIVE_RIG_OVERSPEED_BRAKE_SCALE,
   NATIVE_RIG_SPRING_SCALE,
@@ -689,6 +692,9 @@ export const runVehicleDynamicsStep = ({
   const nativeRigDriveShareFloor = motionMode === 'native-rig' ? NATIVE_RIG_DRIVE_SHARE_FLOOR : 0.18
   const nativeRigOverspeedBrakeScale = motionMode === 'native-rig' ? NATIVE_RIG_OVERSPEED_BRAKE_SCALE : 0
   const nativeRigLateralResponseScale = motionMode === 'native-rig' ? NATIVE_RIG_LATERAL_RESPONSE_SCALE : 1
+  const nativeRigGroundedLateralDamping = motionMode === 'native-rig' ? NATIVE_RIG_GROUNDED_LATERAL_DAMPING : 0
+  const nativeRigGroundedVerticalDamping = motionMode === 'native-rig' ? NATIVE_RIG_GROUNDED_VERTICAL_DAMPING : 0
+  const nativeRigGroundedAngularDamping = motionMode === 'native-rig' ? NATIVE_RIG_GROUNDED_ANGULAR_DAMPING : 0
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
@@ -1166,13 +1172,21 @@ export const runVehicleDynamicsStep = ({
     const rawPostLateralSpeed = rawPostVel.x * rightX + rawPostVel.z * rightZ
     const clampedForwardSpeed = Math.max(-maxReverseSpeed * 1.02, Math.min(maxForwardSpeed, rawPostForwardSpeed))
     const lateralSpeedLimit = Math.max(3.8, Math.abs(clampedForwardSpeed) * 0.34 + 1.1)
-    const clampedLateralSpeed = Math.max(-lateralSpeedLimit, Math.min(lateralSpeedLimit, rawPostLateralSpeed))
-    if (clampedForwardSpeed !== rawPostForwardSpeed || clampedLateralSpeed !== rawPostLateralSpeed) {
+    const clampedLateralSpeedBase = Math.max(-lateralSpeedLimit, Math.min(lateralSpeedLimit, rawPostLateralSpeed))
+    const groundedLateralBlend = grounded ? Math.max(0, 1 - delta * nativeRigGroundedLateralDamping) : 1
+    const dampedLateralSpeed = clampedLateralSpeedBase * groundedLateralBlend
+    const groundedVerticalBlend = grounded ? Math.max(0, 1 - delta * nativeRigGroundedVerticalDamping) : 1
+    const dampedVerticalSpeed = grounded ? rawPostVel.y * groundedVerticalBlend : rawPostVel.y
+    if (
+      clampedForwardSpeed !== rawPostForwardSpeed ||
+      dampedLateralSpeed !== rawPostLateralSpeed ||
+      dampedVerticalSpeed !== rawPostVel.y
+    ) {
       body.setLinvel(
         {
-          x: forwardX * clampedForwardSpeed + rightX * clampedLateralSpeed,
-          y: rawPostVel.y,
-          z: forwardZ * clampedForwardSpeed + rightZ * clampedLateralSpeed,
+          x: forwardX * clampedForwardSpeed + rightX * dampedLateralSpeed,
+          y: dampedVerticalSpeed,
+          z: forwardZ * clampedForwardSpeed + rightZ * dampedLateralSpeed,
         },
         true,
       )
@@ -1192,6 +1206,18 @@ export const runVehicleDynamicsStep = ({
           x: supportRight.x * clampedPitchRate + supportForward.x * clampedRollRate + supportNormal.x * yawRate,
           y: supportRight.y * clampedPitchRate + supportForward.y * clampedRollRate + supportNormal.y * yawRate,
           z: supportRight.z * clampedPitchRate + supportForward.z * clampedRollRate + supportNormal.z * yawRate,
+        },
+        true,
+      )
+    }
+    if (nativeRigGroundedAngularDamping > 0 && grounded) {
+      const dampedAng = body.angvel()
+      const angularBlend = Math.max(0, 1 - delta * nativeRigGroundedAngularDamping)
+      body.setAngvel(
+        {
+          x: dampedAng.x * angularBlend,
+          y: dampedAng.y * Math.max(0, 1 - delta * (nativeRigGroundedAngularDamping * 0.45)),
+          z: dampedAng.z * angularBlend,
         },
         true,
       )

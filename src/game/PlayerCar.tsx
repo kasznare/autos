@@ -22,6 +22,9 @@ import {
   CAMERA_FOLLOW_HEIGHT,
   CAMERA_LOOK_AHEAD,
   DEFAULT_START_POSITION,
+  NATIVE_RIG_VISUAL_WHEEL_LATERAL_LIMIT,
+  NATIVE_RIG_VISUAL_WHEEL_LONGITUDINAL_LIMIT,
+  NATIVE_RIG_VISUAL_WHEEL_SMOOTHING,
   ensureFinitePhysicsState,
   handlePlayerCollisionEnter,
   handlePlayerCollisionExit,
@@ -102,6 +105,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
   const visualFrontLeftSteerRef = useRef(0)
   const visualFrontRightSteerRef = useRef(0)
   const visualWheelSpinRef = useRef(0)
+  const visualWheelPositionsRef = useRef<Array<[number, number, number]>>(DEFAULT_DEBUG_WHEEL_POSITIONS.map((pos) => [...pos] as [number, number, number]))
   const visualUpdateTimerRef = useRef(0)
   const [visualWheelState, setVisualWheelState] = useState<{
     frontLeftSteer: number
@@ -387,6 +391,11 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     visualFrontLeftSteerRef.current = 0
     visualFrontRightSteerRef.current = 0
     visualWheelSpinRef.current = 0
+    const resetVisualWheelPositions = rigCorners.map<[number, number, number]>((corner, index) => {
+      const fallback = DEFAULT_DEBUG_WHEEL_POSITIONS[index] ?? [0, 0, 0]
+      return [corner.localAnchor[0] ?? fallback[0], corner.localAnchor[1] ?? fallback[1], corner.localAnchor[2] ?? fallback[2]]
+    })
+    visualWheelPositionsRef.current = resetVisualWheelPositions
     visualUpdateTimerRef.current = 0
     lastGroundedAtRef.current = performance.now() / 1000
     zoneDamageRef.current = { front: 0, rear: 0, left: 0, right: 0 }
@@ -837,16 +846,34 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const debugWheelPositions = rigCorners.map<[number, number, number]>((_, index) => {
       const wheelBody = wheelBodyRefs.current[index]
       if (!wheelBody) {
-        return visualWheelState.debugWheelPositions[index] ?? DEFAULT_DEBUG_WHEEL_POSITIONS[index] ?? [0, 0, 0]
+        return visualWheelPositionsRef.current[index] ?? visualWheelState.debugWheelPositions[index] ?? DEFAULT_DEBUG_WHEEL_POSITIONS[index] ?? [0, 0, 0]
       }
       const wp = wheelBody.translation()
       tempWorldWheel.set(wp.x, wp.y, wp.z)
       tempLocalWheel.copy(tempWorldWheel).sub(tempBodyPosVec).applyQuaternion(tempBodyQuatInv)
-      return [
+      const anchorLocal = rigCorners[index]?.localAnchor ?? ([0, 0, 0] as const)
+      const rawPosition: [number, number, number] = [
         tempLocalWheel.x / safeSx,
         tempLocalWheel.y / safeSy,
         tempLocalWheel.z / safeSz,
       ]
+      const clampedPosition: [number, number, number] = [
+        Math.max(anchorLocal[0] - NATIVE_RIG_VISUAL_WHEEL_LATERAL_LIMIT, Math.min(anchorLocal[0] + NATIVE_RIG_VISUAL_WHEEL_LATERAL_LIMIT, rawPosition[0])),
+        rawPosition[1],
+        Math.max(
+          anchorLocal[2] - NATIVE_RIG_VISUAL_WHEEL_LONGITUDINAL_LIMIT,
+          Math.min(anchorLocal[2] + NATIVE_RIG_VISUAL_WHEEL_LONGITUDINAL_LIMIT, rawPosition[2]),
+        ),
+      ]
+      const previous = visualWheelPositionsRef.current[index] ?? rawPosition
+      const smoothing = 1 - Math.exp(-renderDelta * NATIVE_RIG_VISUAL_WHEEL_SMOOTHING)
+      const smoothed: [number, number, number] = [
+        previous[0] + (clampedPosition[0] - previous[0]) * smoothing,
+        previous[1] + (clampedPosition[1] - previous[1]) * smoothing,
+        previous[2] + (clampedPosition[2] - previous[2]) * smoothing,
+      ]
+      visualWheelPositionsRef.current[index] = smoothed
+      return smoothed
     })
     visualUpdateTimerRef.current += renderDelta
     if (visualUpdateTimerRef.current >= 0.08) {
