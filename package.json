@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "vite --port 5180",
     "build": "tsc -b && vite build",
+    "browser:smoke": "npm exec -- tsx scripts/browser-smoke.ts",
+    "physics:reality": "npm exec -- tsx scripts/reality-smoke.ts",
     "lint": "eslint .",
     "physics:bounce": "node scripts/smoke-bounce.mjs",
     "physics:runtime": "npm exec -- tsx scripts/physics-runtime.ts",
     "physics:scenarios": "npm exec -- tsx scripts/physics-scenarios.ts",
-    "maps:smoke": "tsx scripts/smoke-maps.ts",
+    "vehicle:catalog": "npm exec -- tsx scripts/smoke-vehicle-catalog.ts",
+    "maps:smoke": "npm exec -- tsx scripts/smoke-maps.ts",
     "preview": "vite preview",
-    "verify:builds": "tsx scripts/verify-vehicle-builds.ts"
+    "verify:builds": "npm exec -- tsx scripts/verify-vehicle-builds.ts",
+    "validate": "npm run lint && npm run build && npm run physics:bounce && npm run physics:runtime && npm run maps:smoke && npm run verify:builds && npm run vehicle:catalog"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -34,6 +38,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "playwright": "^1.58.2",
     "tsx": "^4.20.6",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",

@@ -107,6 +107,15 @@ export type PhysicsEventNameV2 = keyof PhysicsEventMapV2
 
 export type PhysicsEventPayloadV2<K extends PhysicsEventNameV2> = PhysicsEventMapV2[K]
 
+export type VehicleRealityMetricsV2 = {
+  wheelPenetrationM: number
+  chassisPenetrationM: number
+  wheelHoverGapM: number
+  groundedWheelCount: number
+  groundedVerticalSpeedMps: number
+  supportToWeightRatio: number
+}
+
 export type PhysicsDebugTelemetryV2 = {
   apiVersion: typeof PHYSICS_API_VERSION_V2
   speedKph: number
@@ -120,14 +129,16 @@ export type PhysicsDebugTelemetryV2 = {
   hardContactCount: number
   nanGuardTrips: number
   speedClampTrips: number
-  driveMode: 'native' | '2wd-rwd'
-  wheelDebugRows: readonly [string, string, string, string]
+  motionMode: 'legacy-chassis' | 'native-rig'
+  driveMode: 'native' | 'fwd' | 'rwd' | 'awd'
+  wheelDebugRows: readonly string[]
   rampContact: number
   rampCompression: number
   rampSpringForce: number
   rampDriveForce: number
   rampLateralForce: number
   rampTractionLimit: number
+  realityMetrics: VehicleRealityMetricsV2
 }
 
 export type WorldObstacle = {

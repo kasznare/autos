@@ -1,4 +1,5 @@
 import type { PhysicsDebugTelemetryV2 } from '../types'
+import { createInitialRealityMetricsV2 } from '../systems/player-car/reality'
 
 export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 => ({
   apiVersion: '2.0.0',
@@ -13,6 +14,7 @@ export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 
   hardContactCount: 0,
   nanGuardTrips: 0,
   speedClampTrips: 0,
+  motionMode: 'native-rig',
   driveMode: 'native',
   wheelDebugRows: ['-', '-', '-', '-'],
   rampContact: 0,
@@ -21,4 +23,5 @@ export const createInitialPhysicsDebugTelemetryV2 = (): PhysicsDebugTelemetryV2 
   rampDriveForce: 0,
   rampLateralForce: 0,
   rampTractionLimit: 0,
+  realityMetrics: createInitialRealityMetricsV2(),
 })

@@ -9,6 +9,7 @@ import { useRenderSettings } from './game/render/useRenderSettings'
 import { stopEngineSound } from './game/sfx'
 import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
+import type { VehicleRealityMetricsV2 } from './game/types'
 
 type TestApi = {
   getState: () => {
@@ -24,6 +25,7 @@ type TestApi = {
     isRoomHost: boolean
     multiplayerStatus: string
     sessionLocked: boolean
+    realityMetrics: VehicleRealityMetricsV2
   }
   setDamage: (value: number) => void
   restartRun: () => void
@@ -183,6 +185,7 @@ export const App = () => {
           isRoomHost,
           multiplayerStatus: state.multiplayerStatus,
           sessionLocked: state.sessionLocked,
+          realityMetrics: state.physicsTelemetry.realityMetrics,
         }
       },
       setDamage: (value) => {
@@ -259,7 +262,7 @@ export const App = () => {
       >
         <color attach="background" args={['#b9bec4']} />
         <fog attach="fog" args={['#b9bec4', 40, 140]} />
-        <Physics gravity={mapGravity}>
+        <Physics gravity={mapGravity} timeStep={1 / 60} updateLoop="independent">
           <GameScene
             lowPowerMode={render.lowPowerMode}
             qualityTier={render.runtimeQualityTier}

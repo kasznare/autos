@@ -1,5 +1,5 @@
 import { Sparkles } from '@react-three/drei'
-import { CuboidCollider, CylinderCollider, RapierRigidBody, RigidBody } from '@react-three/rapier'
+import { CuboidCollider, CylinderCollider, RapierRigidBody, RigidBody, useBeforePhysicsStep } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Group, Quaternion, Vector3 } from 'three'
@@ -33,6 +33,8 @@ import {
   processNearbyPickups,
   resetBodyPoseAndTelemetry,
   syncGamepadInput,
+  getRealityLiftCorrectionM,
+  measureRealityMetrics,
 } from './systems/player-car'
 import type { PartDamageStateV2, PartZoneIdV2, Pickup } from './types'
 
@@ -63,6 +65,7 @@ const DEFAULT_DEBUG_WHEEL_POSITIONS: Array<[number, number, number]> = [
 
 const NATIVE_RIG_SPAWN_COMPRESSION_RATIO = 0.48
 const NATIVE_RIG_GRAVITY_SCALE = 1.45
+const MAX_RENDER_DELTA = 1 / 20
 
 export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPowerMode = false }: PlayerCarProps) => {
   const bodyRef = useRef<RapierRigidBody>(null!)
@@ -323,6 +326,13 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
     return frontRadii.reduce((sum, radius) => sum + radius, 0) / frontRadii.length
   }, [wheelAnchors, wheelRuntimeProps])
+  const chassisRealityProfile = useMemo(() => {
+    const [sx, sy, sz] = vehiclePhysicsTuning.scale
+    return {
+      halfExtents: [0.56 * Math.abs(sx), 0.28 * Math.abs(sy), 1.12 * Math.abs(sz)] as const,
+      offset: [0, 0.12 * sy, 0] as const,
+    }
+  }, [vehiclePhysicsTuning.scale])
 
   useEffect(() => {
     wheelBodyRefs.current.length = rigCorners.length
@@ -491,40 +501,15 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
   }, [gl])
 
-  useFrame((state, delta) => {
+  useBeforePhysicsStep((world) => {
     const body = bodyRef.current
     if (!body) {
       return
     }
 
     syncGamepadInput(activeGamepadIndexRef)
-    if (typeof navigator !== 'undefined' && navigator.getGamepads) {
-      const activeIdx = activeGamepadIndexRef.current
-      const pads = navigator.getGamepads()
-      const gamepad =
-        activeIdx !== null && pads[activeIdx] && pads[activeIdx]?.connected
-          ? pads[activeIdx]
-          : Array.from(pads).find((pad) => Boolean(pad && pad.connected)) ?? null
-      if (gamepad) {
-        const lookX = gamepad.axes[2] ?? 0
-        const lookY = gamepad.axes[3] ?? 0
-        const deadzone = 0.16
-        const applyDeadzone = (value: number) => {
-          const magnitude = Math.abs(value)
-          if (magnitude <= deadzone) {
-            return 0
-          }
-          const normalized = (magnitude - deadzone) / (1 - deadzone)
-          return Math.sign(value) * normalized
-        }
-        const yawInput = applyDeadzone(lookX)
-        const pitchInput = applyDeadzone(lookY)
-        if (yawInput !== 0 || pitchInput !== 0) {
-          orbitYawRef.current -= yawInput * delta * 2.05
-          orbitPitchRef.current = Math.max(-0.22, Math.min(0.92, orbitPitchRef.current + pitchInput * delta * 1.45))
-        }
-      }
-    }
+    const delta = Math.max(1 / 240, Math.min(world.timestep || 1 / 60, 1 / 60))
+    const input = getMergedInput(inputRef.current)
     if (
       !ensureFinitePhysicsState({
         body,
@@ -584,20 +569,17 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         speedClampTrips: speedClampTripsRef.current,
       })
       updateEngineSound({ speed: 0, throttle: 0, direction: 'idle', surface: 'road', tone: vehiclePhysicsTuning.engineTone })
-      if (inputRef.current.restart) {
+      if (input.restart) {
         restartRun()
       }
       return
     }
 
-    const input = getMergedInput(inputRef.current)
     const driveCommand = buildDriveCommand(vehicleDefinition, input)
     const rot = body.rotation()
     const bodyPosNow = body.translation()
-    const [sx, sy, sz] = vehiclePhysicsTuning.scale
-    const safeSx = Math.abs(sx) > 1e-4 ? sx : 1
+    const [, sy] = vehiclePhysicsTuning.scale
     const safeSy = Math.abs(sy) > 1e-4 ? sy : 1
-    const safeSz = Math.abs(sz) > 1e-4 ? sz : 1
     tempBodyPosVec.set(bodyPosNow.x, bodyPosNow.y, bodyPosNow.z)
     tempBodyQuat.set(rot.x, rot.y, rot.z, rot.w)
     tempVec.set(0, 1, 0).applyQuaternion(tempBodyQuat)
@@ -638,7 +620,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     const steeringVisualBlend = 1 - Math.exp(-delta * 8.4)
     visualFrontLeftSteerRef.current += (targetFrontLeftSteer - visualFrontLeftSteerRef.current) * steeringVisualBlend
     visualFrontRightSteerRef.current += (targetFrontRightSteer - visualFrontRightSteerRef.current) * steeringVisualBlend
-    const wheelDebugSnapshot = applyWheelActuation({
+    let wheelDebugSnapshot = applyWheelActuation({
       map,
       chassisYaw: localYaw,
       chassisLinVel: rawVel,
@@ -662,6 +644,84 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         suspensionAxisWorld: bodyUp,
       })),
     })
+    let realityMetrics = measureRealityMetrics({
+      body,
+      map,
+      motionMode: vehicleMotionMode,
+      wheelBodies: wheelBodyRefs.current,
+      wheelRadii: wheelRuntimeProps.map((wheel) => wheel.radius),
+      wheelSamples: wheelDebugSnapshot.runtime.wheelSamples,
+      chassisHalfExtents: chassisRealityProfile.halfExtents,
+      chassisOffset: chassisRealityProfile.offset,
+    })
+    const realityLiftCorrectionM = useNativeRigMotion ? getRealityLiftCorrectionM(realityMetrics) : 0
+    if (realityLiftCorrectionM > 0.001) {
+      const realityLiftBiasM = 0.004
+      const liftedBodyPos = body.translation()
+      body.setTranslation(
+        {
+          x: liftedBodyPos.x,
+          y: liftedBodyPos.y + realityLiftCorrectionM + realityLiftBiasM,
+          z: liftedBodyPos.z,
+        },
+        true,
+      )
+      const liftedLinVel = body.linvel()
+      const correctedVerticalSpeed = liftedLinVel.y <= 0 ? 0 : Math.min(0.08, liftedLinVel.y * 0.18)
+      if (correctedVerticalSpeed !== liftedLinVel.y) {
+        body.setLinvel({ x: liftedLinVel.x, y: correctedVerticalSpeed, z: liftedLinVel.z }, true)
+      }
+      for (const wheelBody of wheelBodyRefs.current) {
+        if (!wheelBody) {
+          continue
+        }
+        const wheelPos = wheelBody.translation()
+        const nextWheelPos = {
+          x: wheelPos.x,
+          y: wheelPos.y + realityLiftCorrectionM + realityLiftBiasM,
+          z: wheelPos.z,
+        }
+        wheelBody.setTranslation(nextWheelPos, true)
+        wheelBody.setNextKinematicTranslation(nextWheelPos)
+      }
+      wheelDebugSnapshot = applyWheelActuation({
+        map,
+        chassisYaw: localYaw,
+        chassisLinVel: body.linvel(),
+        wheelTargets,
+        wheelActuators: rigCorners.map((corner, index) => ({
+          wheelId: corner.id,
+          body: wheelBodyRefs.current[index] ?? null,
+          radius: wheelRuntimeProps[index]?.radius ?? corner.wheelRadius ?? 0.22,
+          axle: (wheelAnchors[index]?.[2] ?? 0) >= 0 ? 'front' : 'rear',
+          side: corner.side,
+          suspensionRestLength: corner.suspension.restLength * Math.max(0.7, safeSy),
+          suspensionTravel: corner.suspension.travel * Math.max(0.7, safeSy),
+          suspensionAnchorWorld: (() => {
+            const anchor = wheelAnchors[index]
+            if (!anchor) {
+              const liftedPos = body.translation()
+              return { x: liftedPos.x, y: liftedPos.y, z: liftedPos.z }
+            }
+            const liftedPos = body.translation()
+            tempBodyPosVec.set(liftedPos.x, liftedPos.y, liftedPos.z)
+            tempAnchorWorld.set(anchor[0], anchor[1], anchor[2]).applyQuaternion(tempBodyQuat).add(tempBodyPosVec)
+            return { x: tempAnchorWorld.x, y: tempAnchorWorld.y, z: tempAnchorWorld.z }
+          })(),
+          suspensionAxisWorld: bodyUp,
+        })),
+      })
+      realityMetrics = measureRealityMetrics({
+        body,
+        map,
+        motionMode: vehicleMotionMode,
+        wheelBodies: wheelBodyRefs.current,
+        wheelRadii: wheelRuntimeProps.map((wheel) => wheel.radius),
+        wheelSamples: wheelDebugSnapshot.runtime.wheelSamples,
+        chassisHalfExtents: chassisRealityProfile.halfExtents,
+        chassisOffset: chassisRealityProfile.offset,
+      })
+    }
     wheelDebugTimerRef.current += delta
     if (wheelDebugTimerRef.current >= 0.12) {
       wheelDebugTimerRef.current = 0
@@ -669,6 +729,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         motionMode: vehicleMotionMode,
         driveMode: vehicleDefinition.drivetrain.layout,
         wheelDebugRows: wheelDebugSnapshot.rows,
+        realityMetrics,
       })
     }
     const step = runVehicleDynamicsStep({
@@ -708,8 +769,68 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     })
     const stepForwardSpeed = step.nextVx * step.forwardX + step.nextVz * step.forwardZ
     visualWheelSpinRef.current += (stepForwardSpeed / Math.max(0.14, avgFrontWheelRadius)) * delta
+    tempBodyPos.set(step.pos.x, step.pos.y, step.pos.z)
+    processNearbyPickups({
+      pickups,
+      tempVec,
+      tempBodyPos,
+      armorTimerRef,
+      addScore,
+      repair,
+      triggerHitFx,
+      playPickupSound,
+      onCollectPickup,
+    })
+  })
+
+  useFrame((state, delta) => {
+    const body = bodyRef.current
+    if (!body) {
+      return
+    }
+
+    const renderDelta = Math.min(delta, MAX_RENDER_DELTA)
+    if (typeof navigator !== 'undefined' && navigator.getGamepads) {
+      const activeIdx = activeGamepadIndexRef.current
+      const pads = navigator.getGamepads()
+      const gamepad =
+        activeIdx !== null && pads[activeIdx] && pads[activeIdx]?.connected
+          ? pads[activeIdx]
+          : Array.from(pads).find((pad) => Boolean(pad && pad.connected)) ?? null
+      if (gamepad) {
+        const lookX = gamepad.axes[2] ?? 0
+        const lookY = gamepad.axes[3] ?? 0
+        const deadzone = 0.16
+        const applyDeadzone = (value: number) => {
+          const magnitude = Math.abs(value)
+          if (magnitude <= deadzone) {
+            return 0
+          }
+          const normalized = (magnitude - deadzone) / (1 - deadzone)
+          return Math.sign(value) * normalized
+        }
+        const yawInput = applyDeadzone(lookX)
+        const pitchInput = applyDeadzone(lookY)
+        if (yawInput !== 0 || pitchInput !== 0) {
+          orbitYawRef.current -= yawInput * renderDelta * 2.05
+          orbitPitchRef.current = Math.max(-0.22, Math.min(0.92, orbitPitchRef.current + pitchInput * renderDelta * 1.45))
+        }
+      }
+    }
+
     const bodyWorldPos = body.translation()
     const bodyWorldRot = body.rotation()
+    const bodyLinVel = body.linvel()
+    const bodyYaw = Math.atan2(
+      2 * (bodyWorldRot.w * bodyWorldRot.y + bodyWorldRot.x * bodyWorldRot.z),
+      1 - 2 * (bodyWorldRot.y * bodyWorldRot.y + bodyWorldRot.z * bodyWorldRot.z),
+    )
+    const forwardX = Math.sin(bodyYaw)
+    const forwardZ = Math.cos(bodyYaw)
+    const [sx, sy, sz] = vehiclePhysicsTuning.scale
+    const safeSx = Math.abs(sx) > 1e-4 ? sx : 1
+    const safeSy = Math.abs(sy) > 1e-4 ? sy : 1
+    const safeSz = Math.abs(sz) > 1e-4 ? sz : 1
     tempBodyPosVec.set(bodyWorldPos.x, bodyWorldPos.y, bodyWorldPos.z)
     tempBodyQuat.set(bodyWorldRot.x, bodyWorldRot.y, bodyWorldRot.z, bodyWorldRot.w)
     tempBodyQuatInv.copy(tempBodyQuat).invert()
@@ -727,7 +848,7 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
         tempLocalWheel.z / safeSz,
       ]
     })
-    visualUpdateTimerRef.current += delta
+    visualUpdateTimerRef.current += renderDelta
     if (visualUpdateTimerRef.current >= 0.08) {
       visualUpdateTimerRef.current = 0
       setVisualWheelState({
@@ -739,15 +860,15 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
     }
 
     updateCameraAndDamageVisuals({
-      delta,
+      delta: renderDelta,
       nowSec: state.clock.elapsedTime,
       damage,
-      yaw: step.yaw,
-      forwardX: step.forwardX,
-      forwardZ: step.forwardZ,
-      pos: step.pos,
-      nextVx: step.nextVx,
-      nextVz: step.nextVz,
+      yaw: bodyYaw,
+      forwardX,
+      forwardZ,
+      pos: bodyWorldPos,
+      nextVx: bodyLinVel.x,
+      nextVz: bodyLinVel.z,
       camera,
       tempBodyPos,
       tempVec,
@@ -770,18 +891,6 @@ export const PlayerCar = ({ pickups, onCollectPickup, onPlayerPosition, lowPower
       cameraLookAhead: CAMERA_LOOK_AHEAD,
       orbitYawRad: orbitYawRef.current,
       orbitPitchRad: orbitPitchRef.current,
-    })
-
-    processNearbyPickups({
-      pickups,
-      tempVec,
-      tempBodyPos,
-      armorTimerRef,
-      addScore,
-      repair,
-      triggerHitFx,
-      playPickupSound,
-      onCollectPickup,
     })
   })
 

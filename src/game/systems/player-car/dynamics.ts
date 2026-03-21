@@ -9,6 +9,12 @@ import type { DriveCommand } from '../../vehicle/drivetrain'
 import type { WheelActuationRuntimeSample } from '../../vehicle/integration'
 import type { VehiclePhysicsMode } from '../../store/types'
 import type { VehicleMotionMode } from '../../store/types'
+import {
+  NATIVE_RIG_ALIGN_SCALE,
+  NATIVE_RIG_ANTIROLL_SCALE,
+  NATIVE_RIG_SPRING_SCALE,
+  NATIVE_RIG_SUPPORT_FORCE_SCALE,
+} from './constants'
 
 type MutableRef<T> = { current: T }
 
@@ -673,9 +679,10 @@ export const runVehicleDynamicsStep = ({
   const rearWheelContactAuthority = wheelActuationRuntime?.rearContactAuthority ?? contactRatio
   const frontWheelSurfaceGrip = wheelActuationRuntime?.frontSurfaceGrip ?? 1
   const rearWheelSurfaceGrip = wheelActuationRuntime?.rearSurfaceGrip ?? 1
-  const nativeRigSpringScale = motionMode === 'native-rig' ? 0.96 : 1
-  const nativeRigAntiRollScale = motionMode === 'native-rig' ? 1.08 : 1
-  const nativeRigAlignScale = motionMode === 'native-rig' ? 0.94 : 1
+  const nativeRigSpringScale = motionMode === 'native-rig' ? NATIVE_RIG_SPRING_SCALE : 1
+  const nativeRigAntiRollScale = motionMode === 'native-rig' ? NATIVE_RIG_ANTIROLL_SCALE : 1
+  const nativeRigAlignScale = motionMode === 'native-rig' ? NATIVE_RIG_ALIGN_SCALE : 1
+  const nativeRigSupportForceScale = motionMode === 'native-rig' ? NATIVE_RIG_SUPPORT_FORCE_SCALE : 1
   const driveBiasFront = driveCommand?.driveBiasFront ?? 0.5
   const driveBiasRear = driveCommand?.driveBiasRear ?? 0.5
   const grounded = groundedWheels >= 2 && Math.abs(linVel.y) <= VEHICLE_PHYSICS.groundingSpeedThreshold
@@ -975,7 +982,7 @@ export const runVehicleDynamicsStep = ({
   const maxForwardSpeed = Math.max(rampMap ? 34 : 18, surfaceConfig.forwardTopSpeed * vehiclePhysicsTuning.topSpeedMult)
   const maxReverseSpeed = Math.max(rampMap ? 12 : 6.2, Math.abs(surfaceConfig.reverseTopSpeed) * vehiclePhysicsTuning.reverseSpeedMult * 1.1)
   if (supportContacts.length > 0) {
-    const maxSupportImpulse = VEHICLE_PHYSICS.suspensionImpulseClamp * delta
+    const maxSupportImpulse = VEHICLE_PHYSICS.suspensionImpulseClamp * nativeRigSupportForceScale * delta
     const frontSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'front').length)
     const rearSupportCount = Math.max(1, supportContacts.filter((contact) => contact.axle === 'rear').length)
     const supportMassShare = driveMass / Math.max(1, supportContacts.length)
