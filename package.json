@@ -7,6 +7,7 @@
     "dev": "vite --port 5180",
     "build": "tsc -b && vite build",
     "browser:smoke": "npm exec -- tsx scripts/browser-smoke.ts",
+    "audio:smoke": "npm exec -- tsx scripts/audio-smoke.ts",
     "physics:reality": "npm exec -- tsx scripts/reality-smoke.ts",
     "lint": "eslint .",
     "physics:bounce": "node scripts/smoke-bounce.mjs",

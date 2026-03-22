@@ -175,7 +175,12 @@ export const handlePlayerCollisionEnter = ({
       reason: 'damage_limit',
     })
   }
-  playCollisionSound(impact.material === 'metal' || impact.material === 'rock', planarSpeed)
+  playCollisionSound({
+    material: impact.material,
+    tier: impact.tier,
+    speed: planarSpeed,
+    relativeSpeed,
+  })
   const hitStrength = Math.min(
     1,
     Math.max(

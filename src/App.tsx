@@ -6,7 +6,7 @@ import { getTrackMap } from './game/maps'
 import { clearRoomIdFromUrl, createRoomId, getRoomIdFromUrl, isMultiplayerConfigured, setRoomIdInUrl } from './game/multiplayer'
 import { resetVirtualInput, setVirtualInput } from './game/keys'
 import { useRenderSettings } from './game/render/useRenderSettings'
-import { stopEngineSound } from './game/sfx'
+import { getAudioDebugState, playCollisionSound, setEngineMuted as setEngineMutedRuntime, stopEngineSound, unlockAudio } from './game/sfx'
 import { useGameStore } from './game/store'
 import { Hud } from './game/Hud'
 import type { VehicleRealityMetricsV2 } from './game/types'
@@ -26,6 +26,7 @@ type TestApi = {
     multiplayerStatus: string
     sessionLocked: boolean
     realityMetrics: VehicleRealityMetricsV2
+    audio: ReturnType<typeof getAudioDebugState>
   }
   setDamage: (value: number) => void
   restartRun: () => void
@@ -39,6 +40,14 @@ type TestApi = {
   advanceMission: (amount?: number) => void
   openGarage: () => void
   closeGarage: () => void
+  setEngineMuted: (muted: boolean) => void
+  unlockAudio: () => Promise<void>
+  previewCollision: (options: {
+    material: 'rubber' | 'wood' | 'metal' | 'rock' | 'glass'
+    tier: 'minor' | 'moderate' | 'major' | 'critical'
+    speed: number
+    relativeSpeed?: number
+  }) => void
 }
 
 const GarageOverlay = lazy(async () => {
@@ -186,6 +195,7 @@ export const App = () => {
           multiplayerStatus: state.multiplayerStatus,
           sessionLocked: state.sessionLocked,
           realityMetrics: state.physicsTelemetry.realityMetrics,
+          audio: getAudioDebugState(),
         }
       },
       setDamage: (value) => {
@@ -244,6 +254,14 @@ export const App = () => {
       },
       closeGarage: () => {
         setGarageOpen(false)
+      },
+      setEngineMuted: (muted) => {
+        useGameStore.getState().setEngineMuted(muted)
+        setEngineMutedRuntime(muted)
+      },
+      unlockAudio: () => unlockAudio(),
+      previewCollision: ({ material, tier, speed, relativeSpeed }) => {
+        playCollisionSound({ material, tier, speed, relativeSpeed })
       },
     }
     return () => {

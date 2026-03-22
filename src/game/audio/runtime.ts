@@ -7,6 +7,8 @@ export const setEngineMutedFlag = (muted: boolean) => {
   engineMuted = muted
 }
 
+export const getAudioContextState = (): AudioContextState | 'unavailable' => ctx?.state ?? 'unavailable'
+
 export const getCtx = () => {
   if (typeof window === 'undefined') {
     return null
@@ -22,4 +24,3 @@ export const getCtx = () => {
 
   return ctx
 }
-
